@@ -346,7 +346,14 @@ def _get_json(url, ttl=API_CACHE_TTL):
     """
     slot = API_CACHE_DIR / (hashlib.sha256(url.encode()).hexdigest() + ".json")
     try:
-        if time.time() - slot.stat().st_mtime < ttl:
+        # max(0, ...): a file just written can report an mtime a hair ahead
+        # of time.time() — clock/filesystem timestamp rounding, seen in
+        # practice on Windows CI runners — which would otherwise make age
+        # negative and "age < ttl" true for *any* ttl, including 0. Clamping
+        # age at 0 is what keeps ttl=0 actually mean "always stale" rather
+        # than occasionally serving a cache entry that is seconds old.
+        age = max(0.0, time.time() - slot.stat().st_mtime)
+        if age < ttl:
             return json.loads(slot.read_text())
     except (OSError, ValueError):
         pass          # missing, unreadable or half-written: just fetch it

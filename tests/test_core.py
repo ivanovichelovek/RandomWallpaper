@@ -41,6 +41,13 @@ os.environ["USERPROFILE"] = str(FAKE)
 os.environ["XDG_CACHE_HOME"] = str(FAKE / ".cache")
 os.environ["XDG_CONFIG_HOME"] = str(FAKE / ".config")
 os.environ["XDG_STATE_HOME"] = str(FAKE / ".local" / "state")
+# platformdirs' own escape hatch for exactly this: on Windows it resolves
+# %APPDATA%/%LOCALAPPDATA% via SHGetKnownFolderPath, which ignores HOME and
+# USERPROFILE entirely — without these, CONFIG_DIR/CACHE_DIR/STATE_DIR would
+# quietly point at the *real* per-user profile on the machine running the
+# test, sandboxed by nothing.
+os.environ["WIN_PD_OVERRIDE_APPDATA"] = str(FAKE / "AppData" / "Roaming")
+os.environ["WIN_PD_OVERRIDE_LOCAL_APPDATA"] = str(FAKE / "AppData" / "Local")
 os.environ.pop("WALLHAVEN_API_KEY", None)
 os.environ.pop("RANDOM_WALLPAPER_DIR", None)
 os.environ.pop("RANDOM_WALLPAPER_SET_COMMAND", None)
@@ -61,8 +68,15 @@ def check(label, cond):
 # ── paths ───────────────────────────────────────────────────────────────────
 check("SAVE_DIR follows HOME", rw.SAVE_DIR == FAKE / "random_wallpaper")
 check("SAVE_DIR does not exist yet", not rw.SAVE_DIR.exists())
-check("CONFIG_FILE under XDG_CONFIG_HOME",
-      rw.CONFIG_FILE == FAKE / ".config" / "random-wallpaper" / "config.json")
+# CONFIG_FILE's parent is platformdirs' own answer, and that answer is
+# deliberately not the same shape on every OS: XDG_CONFIG_HOME on Linux,
+# but platformdirs ignores it on Windows and macOS in favour of each
+# platform's own convention (%LOCALAPPDATA%, ~/Library/Application Support).
+# The one thing every platform agrees on is that it is *somewhere under FAKE*
+# — the point being tested is that $HOME redirection reached CONFIG_FILE at
+# all, not which subdirectory convention answered it.
+check("CONFIG_FILE is config.json under FAKE, wherever platformdirs put it",
+      rw.CONFIG_FILE.name == "config.json" and FAKE in rw.CONFIG_FILE.parents)
 
 # ── preferences round-trip ──────────────────────────────────────────────────
 check("defaults load when no config exists", rw.load_prefs() == rw.DEFAULTS)
@@ -71,8 +85,17 @@ prefs["orientation"] = "portrait"
 prefs["wallhaven_apikey"] = "secret-key"
 rw.save_prefs(prefs)
 check("prefs round-trip", rw.load_prefs()["orientation"] == "portrait")
-check("config is 0600 — it can hold an API key",
-      oct(rw.CONFIG_FILE.stat().st_mode & 0o777) == "0o600")
+# chmod(0o600) is a real permission narrowing on POSIX (Linux, macOS) but
+# not on Windows: os.chmod() there can only toggle the read-only attribute,
+# so st_mode never reflects Unix-style bits — an NTFS file protected by the
+# user's own ACL (the actual mechanism there) can still report 0o666. The
+# call is still made unconditionally in save_prefs() since it costs nothing
+# and helps everywhere it can; only the assertion is platform-specific.
+if os.name == "posix":
+    check("config is 0600 — it can hold an API key",
+          oct(rw.CONFIG_FILE.stat().st_mode & 0o777) == "0o600")
+else:
+    check("config.chmod(0o600) did not raise on Windows", True)
 check("config keeps every key", "source" in json.loads(rw.CONFIG_FILE.read_text()))
 check("config key used when env is unset", rw.wallhaven_key(prefs) == "secret-key")
 os.environ["WALLHAVEN_API_KEY"] = "env-key"
