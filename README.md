@@ -19,16 +19,18 @@ times, once per OS.
 
 ## Install
 
-Requires Python 3.9+.
+Uses [uv](https://docs.astral.sh/uv/) — it resolves against the committed
+`uv.lock`, so every install gets the exact versions this was tested against,
+and manages its own Python download if `requires-python` (3.9+) isn't already
+on the machine.
 
 ```bash
 git clone https://github.com/ivanovichelovek/RandomWallpaper.git
 cd RandomWallpaper
-python3 -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install .
+uv sync
 ```
 
-This installs two commands:
+This creates `.venv/` and installs two commands into it:
 
 * `random-wallpaper` — a console entry point. `--auto`, `--period` and the
   other non-windowed modes print to stdout; also opens the window with no
@@ -39,8 +41,12 @@ This installs two commands:
 Launch the window with either one:
 
 ```bash
-random-wallpaper
+uv run random-wallpaper
 ```
+
+No `uv`? `pip install .` works the same way (`pip install -e .` for
+development) — `uv` is just faster and pins exact versions; nothing here
+depends on it specifically.
 
 ### Linux desktop integration
 
@@ -54,9 +60,13 @@ launcher, with quick actions for "From Konachan", "From Wallhaven" and
 
 ### Standalone binaries
 
-`pip install .[build]` then `pyinstaller packaging/pyinstaller.spec` builds a
-single-file/app-bundle binary for whichever platform you run it on (see
-`packaging/pyinstaller.spec`).
+```bash
+uv sync --extra build
+uv run pyinstaller packaging/pyinstaller.spec
+```
+
+builds a single-file/app-bundle binary for whichever platform you run it on
+(see `packaging/pyinstaller.spec`).
 
 ## The calendar rotation
 
@@ -116,9 +126,10 @@ and is read from `WALLHAVEN_API_KEY` first, the Settings field second.
   (`plasma-apply-wallpaperimage`), XFCE (`xfconf-query`), then the X11-only
   `feh` / `xwallpaper` / `nitrogen`. None found? Set
   `RANDOM_WALLPAPER_SET_COMMAND="your-command {path}"` in the environment.
-* **macOS**: `NSWorkspace` via PyObjC when `pip install .[macos]` is used
-  (no permission prompt); falls back to AppleScript/System Events otherwise
-  (needs an Automation grant, requested the first time it runs).
+* **macOS**: `NSWorkspace` via PyObjC when installed with the `macos` extra
+  (`uv sync --extra macos`; it's marker-gated so it only actually installs
+  there) — no permission prompt; falls back to AppleScript/System Events
+  otherwise (needs an Automation grant, requested the first time it runs).
 * **Windows**: `SystemParametersInfoW`, the same API every version of
   Windows since 95 answers.
 
@@ -131,11 +142,16 @@ and is read from `WALLHAVEN_API_KEY` first, the Settings field second.
 ## Development
 
 ```bash
-pip install -e .
-python tests/test_core.py     # the calendar/file-handling suite (needs network
+uv sync --extra macos --extra build   # everything, including the optional extras
+uv run tests/test_core.py     # the calendar/file-handling suite (needs network
                                # for two live download checks; everything else
                                # runs offline)
+uv run tests/smoke_ui.py      # headless Qt window construction, all three tabs
 ```
+
+`.github/workflows/test.yml` runs both on `ubuntu-latest`, `macos-latest` and
+`windows-latest` on every push, using the same `uv sync --locked` — that's the
+real cross-platform check, since development itself happens on Linux alone.
 
 `randomwallpaper/core.py` holds everything platform-independent — themes, the
 calendar, preferences, the two sources, the rotation. `randomwallpaper/

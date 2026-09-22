@@ -12,7 +12,14 @@ block_cipher = None
 root = Path(SPECPATH).parent
 
 a = Analysis(
-    [str(root / "randomwallpaper" / "__main__.py")],
+    # bootstrap.py, not randomwallpaper/__main__.py: PyInstaller runs its
+    # entry script as a top-level __main__ outside any package, and
+    # __main__.py's `from .cli import main` is a relative import that only
+    # resolves inside the randomwallpaper package — it fails at startup in a
+    # built binary with "attempted relative import with no known parent
+    # package". bootstrap.py imports randomwallpaper as an ordinary package
+    # instead, which is what a frozen build actually needs.
+    [str(root / "packaging" / "bootstrap.py")],
     pathex=[str(root)],
     binaries=[],
     datas=[(str(root / "randomwallpaper" / "resources"), "randomwallpaper/resources")],
