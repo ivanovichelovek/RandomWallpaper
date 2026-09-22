@@ -33,8 +33,14 @@ exe = EXE(
     upx=True,
     console=False,             # the GUI build; a console build is the pip
                                 # console-script entry point instead
-    icon=str(root / "randomwallpaper" / "resources" / "icon.svg")
-         if sys.platform == "win32" else None,
+    # No icon here on purpose: PyInstaller's EXE/BUNDLE icon= wants a native
+    # format per platform (.ico on Windows, .icns on macOS) and the project
+    # only ships resources/icon.svg. Passing the SVG straight through fails
+    # the build rather than degrading gracefully. Convert it once — e.g.
+    # `magick icon.svg -define icon:auto-resize=256,128,64,48,32,16 icon.ico`
+    # and the macOS equivalent via `iconutil` — and point `icon=` at that
+    # file if a polished app icon is wanted.
+    icon=None,
 )
 
 if sys.platform == "darwin":

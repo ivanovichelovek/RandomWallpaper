@@ -1,0 +1,102 @@
+name: test
+
+# The only real cross-platform verification this project gets: the calendar
+# and file-handling core plus a headless UI smoke test, run on all three
+# target OSes. Development happens on Linux alone, so this is what catches an
+# AppKit import missing on macOS or a ctypes call that only resolves on
+# Windows before a user does.
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ["3.11"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Qt needs a handful of X11/GL libraries to even load its "offscreen"
+      # platform plugin on a bare Linux runner — macOS and Windows runners
+      # ship what Qt needs already.
+      - name: Install Linux Qt runtime dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libopengl0 libxkbcommon0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
+
+      - name: Install the package
+        # The [macos] extra's own dependency is marker-gated
+        # (sys_platform == 'darwin'), so pip simply skips it on Linux and
+        # Windows rather than failing — no need to branch by OS here.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[macos]"
+
+      - name: Calendar / file-handling suite (offline parts + two live downloads)
+        run: python tests/test_core.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Headless UI construction smoke test
+        run: python tests/smoke_ui.py
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Report which wallpaper backend this OS resolved to
+        run: python -m randomwallpaper --backend
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Linux Qt runtime dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libopengl0 libxkbcommon0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
+
+      - name: Build the wheel
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --wheel
+
+      - name: Install it and build a standalone binary with PyInstaller
+        run: |
+          pip install dist/*.whl
+          pip install .[build]
+          pyinstaller packaging/pyinstaller.spec
+        shell: bash
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: random-wallpaper-${{ runner.os }}
+          path: |
+            dist/*.whl
+            dist/random-wallpaper*
+          if-no-files-found: warn
