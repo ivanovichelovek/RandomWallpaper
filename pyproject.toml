@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "randomwallpaper"
+version = "1.0.0"
+description = "A reel of random wallpapers: keep the ones you want, drop the rest."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [{ name = "ivanovichchelovek" }]
+keywords = ["wallpaper", "desktop", "konachan", "wallhaven", "seasonal"]
+classifiers = [
+    "Environment :: X11 Applications :: Qt",
+    "Environment :: MacOS X",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Topic :: Desktop Environment",
+]
+dependencies = [
+    # Qt is the whole reason this runs on three desktops from one wheel: it
+    # ships its own toolkit rather than asking the machine for one, which is
+    # what GTK could never do on Windows or macOS without MSYS2 / Homebrew.
+    "PySide6-Essentials>=6.5; python_version >= '3.9'",
+    # Deleting a wallpaper goes to the platform's own trash, never to unlink,
+    # on all three systems. Pure Python, no build step.
+    "Send2Trash>=1.8",
+    # Cache / config / state in the place each platform actually uses.
+    "platformdirs>=3.0",
+]
+
+[project.optional-dependencies]
+# The native macOS wallpaper API. Without it the macOS backend falls back to
+# AppleScript, which needs an Automation permission grant; with it, it does not.
+macos = ["pyobjc-framework-Cocoa>=9.0; sys_platform == 'darwin'"]
+build = ["pyinstaller>=6.0"]
+
+[project.urls]
+Homepage = "https://github.com/ivanovichelovek/RandomWallpaper"
+Issues = "https://github.com/ivanovichelovek/RandomWallpaper/issues"
+
+# Two entry points on purpose.
+#
+# `random-wallpaper` is a console script: --auto, --period and --auto-toggle
+# all answer on stdout, and on Windows a GUI entry point is built against
+# pythonw.exe, which has no stdout to answer on — every one of those modes
+# would go silently mute. `random-wallpaper-gui` is the windowed one, and it is
+# what the Start menu shortcut, the .desktop file and the .app bundle launch,
+# so opening the window never flashes a console behind it.
+[project.scripts]
+random-wallpaper = "randomwallpaper.cli:main"
+
+[project.gui-scripts]
+random-wallpaper-gui = "randomwallpaper.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["randomwallpaper*"]
+
+[tool.setuptools.package-data]
+randomwallpaper = ["resources/*"]

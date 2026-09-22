@@ -1,0 +1,23 @@
+[Desktop Entry]
+Type=Application
+Name=Random Wallpaper
+Comment=Download a random wallpaper and keep it or throw it away
+Exec=random-wallpaper-gui
+Icon=dev.ivanc.RandomWallpaper
+Terminal=false
+Categories=Graphics;Utility;
+StartupWMClass=dev.ivanc.RandomWallpaper
+Keywords=wallpaper;background;random;konachan;wallhaven;season;holiday;
+Actions=Konachan;Wallhaven;Seasonal;
+
+[Desktop Action Konachan]
+Name=From Konachan
+Exec=random-wallpaper --source konachan --theme all
+
+[Desktop Action Wallhaven]
+Name=From Wallhaven
+Exec=random-wallpaper --source wallhaven --theme all
+
+[Desktop Action Seasonal]
+Name=Browse what the calendar calls for now
+Exec=random-wallpaper --theme now

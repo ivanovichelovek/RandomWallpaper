@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+*.spec.bak
+
+# Runtime data if it ever ends up under the repo by mistake
+random_wallpaper/
