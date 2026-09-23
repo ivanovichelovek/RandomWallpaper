@@ -984,11 +984,13 @@ try:
 except update.UpdateError:
     check("a source install is never replaced", True)
 
+# Only ever run on Linux, but checked everywhere — so in the host's own
+# spelling of an absolute path, which on Windows starts with a drive letter.
 check("pacman installs a package file with -U",
       update.linux_install_command("pacman", "/tmp/x.pkg.tar.zst")
-      == ["pacman", "-U", "--noconfirm", "/tmp/x.pkg.tar.zst"])
+      == ["pacman", "-U", "--noconfirm", os.path.abspath("/tmp/x.pkg.tar.zst")])
 check("apt gets an absolute path, or it reads a package name",
-      update.linux_install_command("deb", "x.deb")[-1].startswith("/"))
+      os.path.isabs(update.linux_install_command("deb", "x.deb")[-1]))
 
 # The Windows console twin schedules the windowed exe, not itself.
 win_dir = FAKE / "winapp"; win_dir.mkdir()

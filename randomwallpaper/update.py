@@ -336,7 +336,9 @@ def apply(release, progress=None):
 # ── Linux, through the package manager ──────────────────────────────────────
 def linux_install_command(fmt, package):
     """The root command that installs `package` (an absolute path)."""
-    package = str(Path(package).resolve())
+    # abspath, not resolve(): absolute is what apt needs, and there is no
+    # reason to trade the path the package was saved under for its target.
+    package = os.path.abspath(package)
     if fmt == "pacman":
         return ["pacman", "-U", "--noconfirm", package]
     if fmt == "deb":
