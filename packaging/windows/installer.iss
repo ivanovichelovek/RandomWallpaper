@@ -104,3 +104,7 @@ end;
 [UninstallRun]
 ; The scheduled task would otherwise go on starting an exe that is gone.
 Filename: "{app}\random-wallpaper-cli.exe"; Parameters: "--uninstall-timer"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveTimer"
+; Then whatever is still running — the window, or a tick the task started a
+; moment ago. A running exe cannot be deleted, and the uninstaller would
+; quietly leave it behind. With the task gone first, nothing starts another.
+Filename: "{sys}\taskkill.exe"; Parameters: "/F /T /IM random-wallpaper.exe"; Flags: runhidden waituntilterminated; RunOnceId: "StopApp"
