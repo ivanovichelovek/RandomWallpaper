@@ -1,0 +1,29 @@
+name: screenshots
+
+# Look at the app on Windows and macOS without sitting in front of either:
+# each runner has a real desktop session, so the app runs with the
+# platform's own Qt plugin — native fonts, scaling and window frame — and
+# tests/screenshots.py saves every tab. Download them from the run's
+# artifacts (or `gh run download <id>`).
+on:
+  workflow_dispatch:
+
+jobs:
+  shots:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-14]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: { enable-cache: true }
+      - run: uv sync --locked --extra macos
+      - run: uv run tests/screenshots.py screenshots
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots-${{ matrix.os }}
+          path: screenshots/
