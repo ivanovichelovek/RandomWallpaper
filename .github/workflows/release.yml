@@ -1,0 +1,222 @@
+name: release
+
+# Installers for all three platforms, built, installed and started on the
+# runner, then published as a GitHub release the in-app updater reads.
+#
+#   git tag v1.1.0 && git push origin v1.1.0    → build, test, publish
+#   Actions → release → Run workflow            → build and test only
+#
+# Every asset is named by randomwallpaper.update.asset_name() — the same
+# function the updater looks them up with.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  NFPM_VERSION: "2.47.0"
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          version=$(python3 -c 'import randomwallpaper; print(randomwallpaper.__version__)')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # A tag that disagrees with the code would publish an update the
+          # updater then offers forever: it compares against __version__.
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$version" ]; then
+            echo "tag ${GITHUB_REF_NAME} does not match __version__ $version" >&2
+            exit 1
+          fi
+
+  linux:
+    needs: version
+    # The oldest supported Ubuntu sets the glibc floor for everything bundled.
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: { enable-cache: true }
+      # Present at build time so PyInstaller bundles them: whatever the
+      # build machine lacks, the package would have to find on the user's,
+      # and xcb-cursor & co. are not on every desktop.
+      - name: Qt runtime libraries, to bundle
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libopengl0 libxkbcommon0 libxkbcommon-x11-0 \
+            libfontconfig1 libwayland-egl1 libxcb-cursor0 libxcb-icccm4 libxcb-image0 \
+            libxcb-keysyms1 libxcb-randr0 libxcb-render-util0 libxcb-shape0 \
+            libxcb-xinerama0 libxcb-xkb1
+      - run: uv sync --locked --extra build
+      - run: uv run packaging/make_icons.py
+        env: { QT_QPA_PLATFORM: offscreen }
+      - run: uv run pyinstaller --noconfirm packaging/pyinstaller.spec
+      - name: nfpm
+        run: |
+          curl -fsSL --retry 4 -o nfpm.tgz \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          tar xzf nfpm.tgz nfpm && sudo mv nfpm /usr/local/bin/
+      - run: packaging/linux/build-packages.sh
+        env: { PYTHON: .venv/bin/python }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/packages/*
+          if-no-files-found: error
+
+  linux-install:
+    needs: linux
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: archlinux:latest
+            prepare: pacman -Syu --noconfirm
+            install: pacman -U --noconfirm /p/*.pkg.tar.zst
+          - image: debian:12
+            prepare: apt-get update
+            install: apt-get install -y /p/*.deb
+          - image: ubuntu:22.04
+            prepare: apt-get update
+            install: apt-get install -y /p/*.deb
+          - image: fedora:latest
+            prepare: "true"
+            install: dnf install -y /p/*.rpm
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { name: linux, path: p }
+      - name: Install with the package manager, then run it
+        run: |
+          docker run --rm -v "$PWD/p:/p:ro" "${{ matrix.image }}" sh -euxc '
+            ${{ matrix.prepare }}
+            ${{ matrix.install }}
+            random-wallpaper --version
+            random-wallpaper --period
+            # Every Qt plugin that decides whether a window can open at all
+            # must find its system libraries — the package depends are
+            # what provide them.
+            cd /opt/random-wallpaper/_internal/PySide6/Qt/plugins
+            missing=$(for f in platforms/*.so wayland-*/*.so; do
+                LD_LIBRARY_PATH=/opt/random-wallpaper/_internal:/opt/random-wallpaper/_internal/PySide6/Qt/lib \
+                  ldd "$f" | grep "not found" || true; done)
+            [ -z "$missing" ] || { echo "$missing"; exit 1; }
+            # The window itself, headless: still running after 8 s means it
+            # started; anything else is a crash.
+            rc=0; QT_QPA_PLATFORM=offscreen timeout 8 random-wallpaper || rc=$?
+            [ "$rc" -eq 124 ]
+          '
+
+  windows:
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: { enable-cache: true }
+      - run: uv sync --locked --extra build
+      - run: uv run packaging/make_icons.py
+        env: { QT_QPA_PLATFORM: offscreen }
+      - run: uv run pyinstaller --noconfirm packaging/pyinstaller.spec
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue) -and
+              -not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+      - name: Build the installer
+        shell: pwsh
+        run: |
+          $v = "${{ needs.version.outputs.version }}"
+          $name = uv run python -c "from randomwallpaper.update import asset_name; print(asset_name('$v', kind='windows'))"
+          $name = [IO.Path]::GetFileNameWithoutExtension($name.Trim())
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          & $iscc "/DAppVersion=$v" "/DOutputName=$name" packaging\windows\installer.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+      - name: Install it silently, run it, uninstall it
+        shell: pwsh
+        run: |
+          $setup = Get-ChildItem dist\installer\*.exe | Select-Object -First 1
+          Start-Process $setup.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
+          $app = "$env:LOCALAPPDATA\Programs\Random Wallpaper"
+          & "$app\random-wallpaper-cli.exe" --version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # [Run] started the window after installing; it has to go before
+          # the uninstaller can remove its files.
+          Stop-Process -Name random-wallpaper -Force -ErrorAction SilentlyContinue
+          Start-Sleep 2
+          # The uninstaller copies itself to %TEMP% and returns at once, so
+          # -Wait proves nothing; wait for the files to go instead.
+          Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES" -Wait
+          $deadline = (Get-Date).AddSeconds(90)
+          while ((Test-Path "$app\random-wallpaper.exe") -and (Get-Date) -lt $deadline) { Start-Sleep 2 }
+          if (Test-Path "$app\random-wallpaper.exe") { Write-Error "uninstall left the app behind"; exit 1 }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/installer/*.exe
+          if-no-files-found: error
+
+  macos:
+    needs: version
+    # Apple silicon, macOS 13+ (what the PySide6 wheel is built for). An
+    # Intel build would need an Intel runner; see README.
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with: { enable-cache: true }
+      # --extra macos: PyObjC in the bundle, so the wallpaper is set through
+      # NSWorkspace. Without it every minute tick goes through System Events
+      # and asks for the Automation permission from a background agent.
+      - run: uv sync --locked --extra build --extra macos
+      - run: uv run packaging/make_icons.py
+        env: { QT_QPA_PLATFORM: offscreen }
+      - run: iconutil -c icns packaging/macos/icon.iconset -o packaging/macos/icon.icns
+      - run: uv run pyinstaller --noconfirm packaging/pyinstaller.spec
+      - run: packaging/macos/build-pkg.sh
+        env: { PYTHON: .venv/bin/python }
+      - name: Install it with Installer, then run it
+        run: |
+          pkg=$(ls dist/installer/*.pkg)
+          sudo installer -pkg "$pkg" -target /
+          # In /Applications, not "upgraded" in place wherever the build
+          # left a copy of the same bundle id — the relocation trap.
+          test -x "/Applications/Random Wallpaper.app/Contents/MacOS/random-wallpaper"
+          app="/Applications/Random Wallpaper.app/Contents/MacOS/random-wallpaper"
+          "$app" --version
+          "$app" --version | grep -q "${{ needs.version.outputs.version }} (macOS app)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/installer/*.pkg
+          if-no-files-found: error
+
+  publish:
+    if: github.ref_type == 'tag'
+    needs: [version, linux-install, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: assets, merge-multiple: true }
+      - name: Checksums the updater verifies every download against
+        working-directory: assets
+        run: sha256sum * > SHA256SUMS && cat SHA256SUMS
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" assets/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "Random Wallpaper ${{ needs.version.outputs.version }}" \
+            --generate-notes

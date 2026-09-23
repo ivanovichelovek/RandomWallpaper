@@ -87,7 +87,27 @@ DEFAULTS = {
     "set_on_save": True,
     "auto_enabled": True,
     "easter": "orthodox",
+    # When, inside a period, the rotation draws a new wallpaper. "midnight"
+    # is the original behaviour; the other two are for a wallpaper that
+    # changes through the day. See current_slot().
+    "change_mode": "midnight",
+    "change_every": 60,            # minutes, for "every"
+    "change_times": ["07:00", "19:00"],   # local HH:MM, for "times"
 }
+
+CHANGE_MODES = [
+    ("At midnight", "midnight"),
+    ("Every…", "every"),
+    ("At set times", "times"),
+]
+# The floor on "every". With nothing pinned each change is a download, and a
+# wallpaper a minute would be a request a minute against someone else's API.
+MIN_CHANGE_EVERY = 15
+# After a failed download, scheduled ticks leave the network alone this long.
+# The timer ticks every minute, and a download can hang for a minute and a
+# half before it gives up — without a pause an outage would be retried back
+# to back.
+FAILED_BACKOFF = timedelta(minutes=10)
 
 # ── themes ──────────────────────────────────────────────────────────────────
 # A theme is a season or a holiday, and each source is told about it in its own
@@ -613,16 +633,27 @@ def pictures_wallpapers():
     return desktop.pictures_dir() / "Wallpapers"
 
 
-def prune_cache():
+PENDING_MAX_AGE = 24 * 60 * 60
+
+
+def prune_cache(now=None):
     """Drop downloads orphaned by a crash or a kill — they were never accepted,
-    so nothing references them."""
+    so nothing references them.
+
+    Only old ones. A pending file this young may well be a frame waiting in a
+    window that is open right now — every launch runs this, the one that
+    only hands its arguments to that window included — and deleting it
+    leaves the reel pointing at a file that is gone.
+    """
+    cutoff = (now or time.time()) - PENDING_MAX_AGE
     for stale in CACHE_DIR.glob("pending-*"):
         try:
-            stale.unlink()
+            if stale.stat().st_mtime < cutoff:
+                stale.unlink()
         except OSError:
             pass
 
-    cutoff = time.time() - API_CACHE_TTL
+    cutoff = (now or time.time()) - API_CACHE_TTL
     for stale in API_CACHE_DIR.glob("*"):
         try:
             if stale.stat().st_mtime < cutoff:
@@ -725,6 +756,86 @@ def set_auto_enabled(prefs, enabled):
     save_prefs(prefs)
 
 
+# ── how often inside a period ───────────────────────────────────────────────
+def parse_times(value):
+    """"07:00, 19:30" — or a list of such strings — as sorted (hour, minute)
+    pairs. Raises ValueError on anything that is not a time of day, so a
+    typo in Settings is refused rather than saved."""
+    items = value.replace(";", ",").split(",") if isinstance(value, str) else value
+    times = set()
+    for item in items:
+        item = str(item).strip()
+        if not item:
+            continue
+        hour, sep, minute = item.partition(":")
+        if not sep or not hour.isdigit() or not minute.isdigit() or len(minute) != 2:
+            raise ValueError(f"not a time of day: {item!r}")
+        h, m = int(hour), int(minute)
+        if not (0 <= h < 24 and 0 <= m < 60):
+            raise ValueError(f"not a time of day: {item!r}")
+        times.add((h, m))
+    if not times:
+        raise ValueError("no times given")
+    return sorted(times)
+
+
+def format_times(times):
+    return ", ".join(f"{h:02d}:{m:02d}" for h, m in times)
+
+
+def describe_change(prefs):
+    """"each midnight", "every 2 h", "at 07:00, 19:00" — for the hints."""
+    mode = prefs.get("change_mode", "midnight")
+    if mode == "every":
+        try:
+            n = max(MIN_CHANGE_EVERY, int(prefs.get("change_every", 60)))
+        except (TypeError, ValueError):
+            n = 60
+        return f"every {n // 60} h" if n % 60 == 0 else f"every {n} min"
+    if mode == "times":
+        try:
+            return "at " + format_times(parse_times(prefs.get("change_times", [])))
+        except ValueError:
+            pass
+    return "each midnight"
+
+
+def current_slot(prefs, now):
+    """Which stretch of time `now` falls in, as a string that changes exactly
+    when the wallpaper is due to.
+
+    * midnight — the date, which is what the state file always recorded as
+      "day", so an existing state file reads as already up to date;
+    * every — the start of the current n-minute block, counted from local
+      midnight. Anchored to the day rather than to the last change, so an
+      interval that does not divide 24 hours restarts at midnight instead of
+      drifting, and a tick that ran late does not push every later one back;
+    * times — the latest listed time already passed, yesterday's last one
+      before today's first.
+
+    Settings that cannot be read fall back to midnight rather than to
+    changing on every tick.
+    """
+    mode = prefs.get("change_mode", "midnight")
+    if mode == "every":
+        try:
+            n = max(MIN_CHANGE_EVERY, int(prefs.get("change_every", 60)))
+        except (TypeError, ValueError):
+            n = 60
+        start = (now.hour * 60 + now.minute) // n * n
+        return f"{now.date().isoformat()}T{start // 60:02d}:{start % 60:02d}"
+    if mode == "times":
+        try:
+            times = parse_times(prefs.get("change_times", []))
+        except ValueError:
+            return now.date().isoformat()
+        passed = [t for t in times if t <= (now.hour, now.minute)]
+        day = now.date() if passed else now.date() - timedelta(days=1)
+        h, m = max(passed) if passed else times[-1]
+        return f"{day.isoformat()}T{h:02d}:{m:02d}"
+    return now.date().isoformat()
+
+
 # ── the calendar rotation ───────────────────────────────────────────────────
 # What makes this safe to run from a timer, from login, and by hand at the same
 # time is that it compares one thing only: today's period id against the last
@@ -780,7 +891,7 @@ def prune_auto(keep=AUTO_KEEP):
             pass
 
 
-def fetch_for_period(prefs, theme, period, avoid=None):
+def fetch_for_period(prefs, theme, period, avoid=None, fresh=None):
     """The wallpaper for this period, downloaded if it is not here yet.
 
     Downloading first and applying second is the order that matters: a failed
@@ -790,6 +901,10 @@ def fetch_for_period(prefs, theme, period, avoid=None):
     `avoid` is the wallpaper already up. On the nightly re-draw it is excluded
     from the draw, so a pool of two really does alternate instead of showing
     the same picture two nights running half the time.
+
+    `fresh` names a download that must be new — a change through the day,
+    with nothing pinned, is a different picture each time rather than the
+    period's one file set again. It is the slot, so each gets its own file.
     """
     # What you chose for this category wins over anything downloadable, and it
     # is the whole reason the pool exists: the point of picking the Halloween
@@ -801,33 +916,47 @@ def fetch_for_period(prefs, theme, period, avoid=None):
             chosen = others or chosen
         return random.choice(chosen)
 
-    existing = period_wallpaper(period)
+    # No colon in the name: the slot is "…T07:00", and Windows refuses it.
+    # Looked for before downloading either way: a slot whose apply failed
+    # retries with the file it already has, not with a second download.
+    stem = period if fresh is None else f"{period}_{fresh.replace(':', '')}"
+    existing = period_wallpaper(stem)
     if existing:
         return existing
 
     frame = download(dict(prefs, theme=theme))
     AUTO_DIR.mkdir(parents=True, exist_ok=True)
-    dest = AUTO_DIR / f"{period}{frame['ext']}"
+    dest = AUTO_DIR / f"{stem}{frame['ext']}"
     shutil.move(str(frame["path"]), dest)
     prune_auto()
     return dest
 
 
-def run_auto(prefs, force=False, log=print, today=None):
+def run_auto(prefs, force=False, log=print, today=None, now=None, quiet=False):
     """One tick of the rotation. Returns a process exit code.
 
-    Idempotent by construction: run it every hour, or twice in a second, and
-    it acts at most once per period and once per day. That is what lets a
-    scheduled task and a login spawn both be enabled without them fighting.
+    Idempotent by construction: run it every minute, or twice in a second,
+    and it acts at most once per period and once per slot. That is what lets
+    a scheduled task and a login spawn both be enabled without them fighting.
 
     Two things make it act. A new period is the obvious one — the season
-    turned, or a holiday came within its week. The other is a new day inside
-    the same period: when the category has more than one wallpaper pinned to
-    it, one of them is drawn afresh each midnight, so a fortnight of Christmas
-    is not a fortnight of the same picture.
+    turned, or a holiday came within its week. The other is a new slot inside
+    the same period (current_slot): by default a new day, when one of the
+    wallpapers pinned to the category is drawn afresh, so a fortnight of
+    Christmas is not a fortnight of the same picture. Set to change every so
+    often or at set times, a slot is shorter, and with nothing pinned each
+    change is a new download.
+
+    `quiet` drops the lines a tick that does nothing would print. The timer
+    passes it: at one tick a minute, "nothing to do" is 1440 log lines a day.
     """
-    today = today or date.today()
+    if now is None:
+        now = datetime.combine(today, datetime.min.time()) if today else datetime.now()
+    today = now.date()
+    note = (lambda _msg: None) if quiet else log
     theme, period = current_period(today, prefs["easter"])
+    slot = current_slot(prefs, now)
+    through_the_day = prefs.get("change_mode", "midnight") != "midnight"
     state = load_state()
 
     # The latch, and the reason the rotation can be left switched on without
@@ -845,7 +974,7 @@ def run_auto(prefs, force=False, log=print, today=None):
         return 0
 
     if not prefs["auto_enabled"] and not force:
-        log(f"automatic rotation is off (today is {period})")
+        note(f"automatic rotation is off (today is {period})")
         return 0
 
     stamp = today.isoformat()
@@ -855,26 +984,46 @@ def run_auto(prefs, force=False, log=print, today=None):
     gone = bool(state.get("path")) and not Path(state["path"]).exists()
 
     if state.get("period") == period and not force and not gone:
-        # Same period. The only reason left to act is the nightly re-draw, and
-        # only when the category holds more than one wallpaper — with nothing
-        # pinned, or one thing pinned, there is nothing to draw between and
-        # redrawing would just set the same file again every midnight.
-        if state.get("day") == stamp:
-            log(f"already on {period} — nothing to do")
+        # Same period. The only reason left to act is a new slot. A state file
+        # from before slots existed recorded only the day, which is exactly
+        # the midnight slot — so it reads as up to date, not as due.
+        if state.get("slot", state.get("day")) == slot:
+            note(f"already on {period} — nothing to do")
             return 0
-        if len(pool_images(theme)) < 2:
-            # Record the day anyway, or every tick for the rest of it asks the
-            # same question and answers it the same way.
-            state["day"] = stamp
+        pinned = pool_images(theme)
+        # With one wallpaper pinned and already up there is nothing to draw
+        # between, and redrawing would just set the same file again — but if
+        # it was pinned since, the next slot is when it takes over. With none,
+        # midnight keeps the period's download; through the day, that is
+        # what a fresh download is for.
+        single_up = (len(pinned) == 1 and state.get("path")
+                     and same_file(pinned[0], state["path"]))
+        if single_up or (not pinned and not through_the_day):
+            # Record the slot anyway, or every tick for the rest of it asks
+            # the same question and answers it the same way.
+            state["day"], state["slot"] = stamp, slot
             save_state(state)
-            log(f"{period}: nothing pinned to draw between — keeping it")
+            note(f"{period}: nothing pinned to draw between — keeping it")
+            return 0
+
+    failed_at = state.get("failed_at")
+    if failed_at and not force:
+        try:
+            since = now - datetime.fromisoformat(failed_at)
+        except (TypeError, ValueError):
+            since = FAILED_BACKOFF
+        if timedelta(0) <= since < FAILED_BACKOFF:
+            note(f"last download failed at {failed_at} — waiting before the next")
             return 0
 
     try:
         path = fetch_for_period(prefs, theme, period,
-                                avoid=state.get("path") if not force else None)
+                                avoid=state.get("path") if not force else None,
+                                fresh=slot if through_the_day else None)
     except (urllib.error.URLError, http.client.HTTPException, OSError,
             ValueError, FetchError) as exc:
+        state["failed_at"] = now.isoformat(timespec="seconds")
+        save_state(state)
         log(f"no {theme_label(theme)} wallpaper this time: {exc}")
         return 1
 
@@ -889,6 +1038,7 @@ def run_auto(prefs, force=False, log=print, today=None):
     save_state({
         "period": period,
         "day": stamp,
+        "slot": slot,
         "theme": theme,
         "path": str(path),
         "applied_at": datetime.now().astimezone().isoformat(timespec="seconds"),

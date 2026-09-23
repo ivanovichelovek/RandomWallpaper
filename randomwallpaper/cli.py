@@ -30,6 +30,9 @@ def build_parser():
     parser.add_argument("--force", action="store_true",
                         help="with --auto, act even on a period already "
                              "applied and even when the rotation is switched off")
+    parser.add_argument("--quiet", action="store_true",
+                        help="with --auto, print only when something "
+                             "changes or fails — what the timer runs")
     parser.add_argument("--auto-on", action="store_true",
                         help="switch the rotation back on and put this "
                              "period's wallpaper up straight away")
@@ -46,6 +49,12 @@ def build_parser():
                              "for the calendar rotation")
     parser.add_argument("--uninstall-timer", action="store_true",
                         help="remove the scheduled task/timer")
+    parser.add_argument("--version", action="store_true",
+                        help="print the version and how this copy was "
+                             "installed, and exit")
+    parser.add_argument("--update", action="store_true",
+                        help="install the latest release, if it is newer "
+                             "(packaged builds only)")
     parser.add_argument("--backend", action="store_true",
                         help="print which wallpaper backend this platform "
                              "will use, and exit")
@@ -81,6 +90,24 @@ def main(argv=None):
         theme, period = core.current_period(date.today(), prefs["easter"])
         print(f"{period}\t{core.theme_label(theme)}"
               f"\t{'on' if prefs['auto_enabled'] else 'off'}")
+        return 0
+
+    if args.version:
+        from . import __version__, update
+        print(f"random-wallpaper {__version__} ({update.describe_install()})")
+        return 0
+
+    if args.update:
+        from . import __version__, update
+        try:
+            release, newer = update.check()
+            if not newer:
+                print(f"{__version__} is the latest")
+                return 0
+            print(update.apply(release))
+        except update.UpdateError as exc:
+            print(f"not updated: {exc}", file=sys.stderr)
+            return 1
         return 0
 
     if args.backend:
@@ -119,10 +146,13 @@ def main(argv=None):
         return core.resume_auto(prefs)
 
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    core.prune_cache()
 
     if args.auto:
-        return core.run_auto(prefs, force=args.force)
+        # No pruning here: the timer ticks every minute, and a tidy-up that
+        # often has no business near a window's cache.
+        return core.run_auto(prefs, force=args.force, quiet=args.quiet)
+
+    core.prune_cache()
 
     from .ui.app import run_app
     return run_app(prefs, args)

@@ -4,7 +4,7 @@ the keyboard shortcuts shared across all of them.
 import os
 import subprocess
 
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractButton, QApplication, QComboBox, QHBoxLayout, QLabel, QLineEdit,
@@ -32,8 +32,15 @@ _CYRILLIC_TWINS = {
 
 
 class Reel(QMainWindow):
+    _posted = Signal(object)
+
     def __init__(self, app, prefs):
         super().__init__()
+        # Connected before any page exists: the Settings tab starts a worker
+        # in its constructor, and that worker's answer comes back this way.
+        # A bound method rather than a lambda, so the window is the receiver
+        # and the call is queued onto its thread from whichever one emitted.
+        self._posted.connect(self._run_posted)
         self.app = app
         self.prefs = prefs
         self.setWindowTitle("Random Wallpaper")
@@ -69,6 +76,11 @@ class Reel(QMainWindow):
         # ── tabs ─────────────────────────────────────────────────────────
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)
+        # documentMode draws a base line under the tabs in the palette's
+        # light colour — pure white under Fusion, a hairline across the top
+        # of a dark window. The top bar already draws the border that belongs
+        # there.
+        self.tabs.tabBar().setDrawBase(False)
         root.addWidget(self.tabs, 1)
 
         self.reel_page = ReelPage(self)
@@ -101,8 +113,19 @@ class Reel(QMainWindow):
         self.on_tab_changed(0)
 
     # ── cross-thread hand-off ───────────────────────────────────────────
+    @Slot(object)
+    def _run_posted(self, fn):
+        fn()
+
     def post_to_ui(self, fn):
-        QTimer.singleShot(0, fn)
+        """Run fn on the UI thread; callable from any thread.
+
+        A signal, not QTimer.singleShot: a timer started on a worker thread
+        belongs to that thread, which has no event loop, so it never fires.
+        A signal emitted there to this window, which lives on the UI thread,
+        is queued across automatically.
+        """
+        self._posted.emit(fn)
 
     # ── links / apply / latch (shared by reel and library) ─────────────
     def link_into_pictures(self, saved):

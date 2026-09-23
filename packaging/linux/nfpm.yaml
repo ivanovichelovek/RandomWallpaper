@@ -1,0 +1,67 @@
+# The Linux packages: .pkg.tar.zst (Arch), .deb (Debian/Ubuntu), .rpm
+# (Fedora/openSUSE) — one description, three package managers.
+# Built by packaging/linux/build-packages.sh from PyInstaller's onedir output;
+# VERSION and the staging paths come from its environment.
+name: random-wallpaper
+arch: amd64
+platform: linux
+version: ${VERSION}
+release: 1
+section: graphics
+priority: optional
+maintainer: ivanovichelovek <ivanovichelovek@users.noreply.github.com>
+description: |
+  A reel of random wallpapers: keep the ones you want, drop the rest.
+  Konachan and Wallhaven, a library of what you kept, and a calendar
+  rotation that follows the seasons and holidays.
+vendor: ivanovichelovek
+homepage: https://github.com/ivanovichelovek/RandomWallpaper
+license: MIT
+
+contents:
+  # The app itself, as PyInstaller laid it out. /opt because it is one
+  # self-contained tree with its own Qt, not a set of files to spread over
+  # /usr/lib.
+  - src: build/package-stage/random-wallpaper/
+    dst: /opt/random-wallpaper
+    type: tree
+  - src: /opt/random-wallpaper/random-wallpaper
+    dst: /usr/bin/random-wallpaper
+    type: symlink
+  - src: build/package-stage/dev.ivanc.RandomWallpaper.desktop
+    dst: /usr/share/applications/dev.ivanc.RandomWallpaper.desktop
+  - src: randomwallpaper/resources/icon.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/dev.ivanc.RandomWallpaper.svg
+  - src: packaging/linux/icons/48x48.png
+    dst: /usr/share/icons/hicolor/48x48/apps/dev.ivanc.RandomWallpaper.png
+  - src: packaging/linux/icons/128x128.png
+    dst: /usr/share/icons/hicolor/128x128/apps/dev.ivanc.RandomWallpaper.png
+  - src: packaging/linux/icons/256x256.png
+    dst: /usr/share/icons/hicolor/256x256/apps/dev.ivanc.RandomWallpaper.png
+  - src: LICENSE
+    dst: /usr/share/licenses/random-wallpaper/LICENSE
+
+scripts:
+  postinstall: packaging/linux/postinstall.sh
+  postremove: packaging/linux/postinstall.sh
+
+# Everything else Qt needs ships inside the tree; these are what it takes
+# from the system — GL/EGL, the Wayland client and xcb, which have to match
+# the machine's own drivers and display server.
+archlinux:
+  packager: ivanovichelovek <ivanovichelovek@users.noreply.github.com>
+
+overrides:
+  archlinux:
+    depends: [libglvnd, wayland, libxcb]
+  deb:
+    depends: [libegl1, libgl1, libwayland-client0, libwayland-cursor0, libxcb1]
+  rpm:
+    # Sonames rather than package names: Fedora and openSUSE call these
+    # packages different things, but both resolve a soname.
+    depends:
+      - libEGL.so.1()(64bit)
+      - libGL.so.1()(64bit)
+      - libwayland-client.so.0()(64bit)
+      - libwayland-cursor.so.0()(64bit)
+      - libxcb.so.1()(64bit)

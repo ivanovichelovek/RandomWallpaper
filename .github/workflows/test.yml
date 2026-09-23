@@ -58,47 +58,14 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
 
+      - name: The platform's scheduler accepts the generated timer
+        if: runner.os != 'Linux'
+        run: uv run tests/check_scheduler.py
+
       - name: Report which wallpaper backend this OS resolved to
         run: uv run random-wallpaper --backend
         env:
           QT_QPA_PLATFORM: offscreen
 
-  build:
-    needs: test
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Install Linux Qt runtime dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libegl1 libopengl0 libxkbcommon0 \
-            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
-            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
-
-      - name: Build the wheel
-        run: uv build --wheel
-
-      - name: Install it and build a standalone binary with PyInstaller
-        run: |
-          uv sync --locked --extra build
-          uv pip install dist/*.whl
-          uv run pyinstaller packaging/pyinstaller.spec
-        shell: bash
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: random-wallpaper-${{ runner.os }}
-          path: |
-            dist/*.whl
-            dist/random-wallpaper*
-          if-no-files-found: warn
+  # Installers are built, installed and started by release.yml — on a tag, or
+  # by hand from the Actions tab (Run workflow) to try them without publishing.

@@ -19,6 +19,46 @@ times, once per OS.
 
 ## Install
 
+Download the installer for your system from the
+[latest release](https://github.com/ivanovichelovek/RandomWallpaper/releases/latest):
+
+| System | File | What it does |
+|---|---|---|
+| Windows 10/11 | `RandomWallpaper-<version>-windows-x64-setup.exe` | Installs for your user, no administrator needed, into `%LOCALAPPDATA%\Programs\Random Wallpaper`, with a Start-menu entry and an uninstaller under *Apps* |
+| macOS 13+ (Apple silicon) | `RandomWallpaper-<version>-macos-arm64.pkg` | Opens in macOS's Installer and puts *Random Wallpaper* in /Applications |
+| Arch Linux | `random-wallpaper-<version>-1-x86_64.pkg.tar.zst` | `sudo pacman -U random-wallpaper-*.pkg.tar.zst` |
+| Debian / Ubuntu | `random-wallpaper_<version>_amd64.deb` | `sudo apt install ./random-wallpaper_*.deb` |
+| Fedora / openSUSE | `random-wallpaper-<version>-1.x86_64.rpm` | `sudo dnf install ./random-wallpaper-*.rpm` (or `zypper install`) |
+
+The Linux packages put the app in `/opt/random-wallpaper`, the command at
+`/usr/bin/random-wallpaper`, and the launcher entry and icons where the
+desktop finds them; remove them with the same package manager.
+
+The builds are not code-signed. The first time, Windows SmartScreen says
+*Windows protected your PC* — **More info → Run anyway**; macOS says the
+package is from an unidentified developer — open **System Settings → Privacy
+& Security** and click **Open Anyway**. Neither asks again for that version.
+
+### Updating
+
+**Settings → App → Check for updates** looks at the latest GitHub release,
+and **Update to x.y.z** installs it the way the platform installs anything,
+then brings the app back as the new version:
+
+* **Windows** runs the new installer silently over the old one;
+* **macOS** opens the new package in Installer, which asks for your password;
+* **Linux** hands the new package to the package manager that installed the
+  current one (pacman, apt or dnf/zypper) through `pkexec`, which asks for
+  your password. With no polkit agent running, the download is kept and the
+  `sudo …` command to finish it is shown instead.
+
+Every download is checked against the release's `SHA256SUMS` before anything
+is replaced. `random-wallpaper --update` does the same from a terminal, and
+`random-wallpaper --version` says which version and kind of install is
+running.
+
+### From source
+
 Uses [uv](https://docs.astral.sh/uv/) — it resolves against the committed
 `uv.lock`, so every install gets the exact versions this was tested against,
 and manages its own Python download if `requires-python` (3.9+) isn't already
@@ -28,58 +68,89 @@ on the machine.
 git clone https://github.com/ivanovichelovek/RandomWallpaper.git
 cd RandomWallpaper
 uv sync
-```
-
-This creates `.venv/` and installs two commands into it:
-
-* `random-wallpaper` — a console entry point. `--auto`, `--period` and the
-  other non-windowed modes print to stdout; also opens the window with no
-  arguments.
-* `random-wallpaper-gui` — the same program, built as a **windowed** entry
-  point (on Windows, this is the one that does not flash a console).
-
-Launch the window with either one:
-
-```bash
 uv run random-wallpaper
 ```
 
-No `uv`? `pip install .` works the same way (`pip install -e .` for
-development) — `uv` is just faster and pins exact versions; nothing here
-depends on it specifically.
+This installs two commands into `.venv/`: `random-wallpaper`, a console
+entry point, and `random-wallpaper-gui`, a windowed one (on Windows, the one
+that does not flash a console). `packaging/linux/install.sh` adds the
+launcher entry and icon for a source install on Linux. A source install does
+not update itself — `git pull`, or `uv tool upgrade randomwallpaper`.
 
-### Linux desktop integration
+### Building the installers
+
+`.github/workflows/release.yml` builds all of them, installs each on its own
+runner and starts it, then publishes them with `SHA256SUMS` as a GitHub
+release:
 
 ```bash
-packaging/linux/install.sh
+# bump __version__ in randomwallpaper/__init__.py and version in pyproject.toml
+git tag v1.2.0 && git push origin v1.2.0
 ```
 
-installs a `.desktop` file and icon so the app shows up in your application
-launcher, with quick actions for "From Konachan", "From Wallhaven" and
-"Browse what the calendar calls for now".
-
-### Standalone binaries
+The tag must match `__version__`, or the workflow stops before publishing.
+Actions → *release* → *Run workflow* builds and tests them without
+publishing anything. By hand, per platform:
 
 ```bash
-uv sync --extra build
+uv sync --extra build                      # macOS: also --extra macos
+uv run packaging/make_icons.py
 uv run pyinstaller packaging/pyinstaller.spec
+packaging/linux/build-packages.sh          # needs nfpm      → dist/packages/
+iscc /DAppVersion=1.2.0 packaging\windows\installer.iss   # → dist/installer/
+packaging/macos/build-pkg.sh               # after iconutil  → dist/installer/
 ```
 
-builds a single-file/app-bundle binary for whichever platform you run it on
-(see `packaging/pyinstaller.spec`).
+Only an Apple-silicon macOS package is built; an Intel one would need an
+Intel macOS runner.
 
 ## The calendar rotation
 
 `random-wallpaper --auto` is one tick: it sets the wallpaper the calendar
 calls for right now, if it has not already, then exits. It is meant to run
-from a scheduler, and the app can install one for you:
+from a scheduler, and the app installs one for you. Ticking **Change the
+wallpaper by itself** in Settings does it (so does the **Schedule it** button
+that shows up there when no timer is found), or from a terminal:
 
 ```bash
-random-wallpaper --install-timer      # Linux: a systemd --user timer
-                                       # macOS: a LaunchAgent
-                                       # Windows: a Task Scheduler task
+random-wallpaper --install-timer
 random-wallpaper --uninstall-timer    # remove it again
 ```
+
+### How often
+
+A new season or holiday always changes the wallpaper straight away. How often
+it changes *inside* one is the **Change** setting under the checkbox:
+
+* **At midnight** (the default) — a new wallpaper each midnight, drawn from
+  what is pinned to the season or holiday. With nothing pinned, one download
+  stays up for the whole period.
+* **Every…** N minutes or hours (15 minutes at the least), counted from
+  midnight — every 90 minutes is 00:00, 01:30, 03:00…
+* **At set times** — a list like `07:00, 13:30, 19:00`.
+
+In the last two, several pinned wallpapers take turns; one pinned wallpaper
+stays up; with nothing pinned, **every change is a fresh download**. A failed
+download is not retried for 10 minutes.
+
+### The timer
+
+It is the same timer on every platform: `random-wallpaper --auto --quiet` at
+login and then every minute, which is what lets any of the settings above
+land on time without the timer ever being rewritten. A tick with nothing to
+do takes about a tenth of a second and, with `--quiet`, prints nothing. A tick
+missed while the machine was asleep or off runs as soon as it is back.
+
+| | scheduler | triggers |
+|---|---|---|
+| Linux | systemd `--user` timer | 1 min after startup, `minutely` with `AccuracySec=1s`, `Persistent=true` |
+| macOS | LaunchAgent (`~/Library/LaunchAgents/dev.ivanc.RandomWallpaper.auto.plist`) | at login, every 60 s, 00:00 (launchd runs a midnight missed in sleep on wake); log in `~/Library/Logs/random-wallpaper-auto.log` |
+| Windows | Task Scheduler task `RandomWallpaperAuto` | at logon, on unlock, daily from 00:00 repeating every minute, runs a missed start as soon as possible, on battery too; no console window |
+
+An hourly timer from an older version is recognised, and Settings offers to
+**Update it**. A timer that is a symlink — managed from a dotfiles repository,
+say — is never rewritten by the Settings tab; if the Change setting needs more
+than it does, Settings says so. `--install-timer` always rewrites it.
 
 The rotation is careful about one thing above all: **a wallpaper you set by
 hand — from this app or from anywhere else — is never overwritten.** The next
@@ -147,6 +218,7 @@ uv run tests/test_core.py     # the calendar/file-handling suite (needs network
                                # for two live download checks; everything else
                                # runs offline)
 uv run tests/smoke_ui.py      # headless Qt window construction, all three tabs
+uv run tests/check_scheduler.py  # macOS/Windows: the OS scheduler accepts the timer
 ```
 
 `.github/workflows/test.yml` runs both on `ubuntu-latest`, `macos-latest` and

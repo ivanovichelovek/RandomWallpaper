@@ -10,6 +10,8 @@ its parent's CSS provider, so the palette below is set application-wide and
 the stylesheet below addresses `QComboBox QAbstractItemView` directly rather
 than relying on inheritance.
 """
+from pathlib import Path
+
 from PySide6.QtGui import QColor, QPalette
 
 BG = "#0E0F16"
@@ -30,16 +32,41 @@ DANGER = "#E06C6C"
 DANGER_BG = "#33202A"
 DANGER_BORDER = "#6B3A44"
 
+# One colour per season and holiday, for the category tags on the Downloaded
+# tab: told apart at a glance, and each one what the category looks like —
+# spring green, summer gold, autumn orange, winter ice. Bright enough to read
+# on the near-black tiles, drawn over a dim tint of themselves.
+CATEGORY_COLORS = {
+    "spring": "#8FD694",
+    "summer": "#F2C94C",
+    "autumn": "#E8894A",
+    "winter": "#8CC8F0",
+    "halloween": "#B48CF0",
+    "christmas": "#E86A6A",
+    "valentine": "#F08CC0",
+    "easter": "#C8E07A",
+}
+
 MONO_FONT = '"JetBrains Mono", "Consolas", "DejaVu Sans Mono", monospace'
 SANS_FONT = '"Segoe UI", "Noto Sans", "Helvetica Neue", sans-serif'
 
+# Stylesheet url()s want a path; forward slashes work on Windows too.
+RESOURCES = (Path(__file__).resolve().parent.parent / "resources").as_posix()
+
 QSS = f"""
+/* Colour and type for everything, but a background only where one is
+   meant: the window, the bars, the cards, the stage, the controls. A
+   background on every QWidget painted each layout box and label in the
+   window's colour over whatever it sat on — a lighter rectangle around the
+   perforations on the darker stage, a darker one behind each label on a
+   lighter card. */
 QWidget {{
-    background: {BG};
     color: {FG};
     font-family: {SANS_FONT};
     font-size: 13px;
 }}
+QMainWindow, #reelRoot, QDialog {{ background: {BG}; }}
+QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; }}
 #topbar, #bottombar {{
     background: {BG_BAR};
     border: 0px solid {BORDER};
@@ -179,14 +206,20 @@ QToolButton.reelFrame[current="true"] {{ border-color: {ACCENT}; border-width: 2
     border-radius: 6px;
 }}
 
-QLineEdit {{
+QLineEdit, QSpinBox {{
     background: {BG_STAGE};
     color: {FG};
     border: 1px solid {BORDER};
     border-radius: 4px;
     padding: 6px 8px;
 }}
-QLineEdit:focus {{ border-color: {ACCENT}; }}
+QLineEdit:focus, QSpinBox:focus {{ border-color: {ACCENT}; }}
+QSpinBox::up-button, QSpinBox::down-button {{
+    background: {BG_BTN}; border: none; width: 16px;
+}}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {{ background: {BG_BTN_HOVER}; }}
+QSpinBox::up-arrow {{ image: url({RESOURCES}/arrow-up.svg); width: 8px; height: 5px; }}
+QSpinBox::down-arrow {{ image: url({RESOURCES}/arrow-down.svg); width: 8px; height: 5px; }}
 
 QComboBox {{
     background: {BG_BTN};
@@ -207,6 +240,14 @@ QComboBox QAbstractItemView {{
     outline: none;
 }}
 
+/* Text sitting on a card or a bar shows the card or bar through it. The
+   QWidget rule above gives every widget the window's background, and on a
+   lighter card that drew a dark box behind each label and check box. Named
+   by type, not "#card QWidget": an id selector would outrank, and flatten,
+   the buttons' and inputs' own backgrounds. */
+#card QLabel, #card QCheckBox, #card QRadioButton,
+#bottombar QLabel, #topbar QLabel, #confirm QLabel,
+QWidget#barMeta {{ background: transparent; }}
 QCheckBox, QRadioButton {{ color: {FG}; font-size: 13px; spacing: 8px; }}
 QCheckBox::indicator, QRadioButton::indicator {{
     width: 14px; height: 14px;
@@ -220,6 +261,14 @@ QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
 }}
 
 QScrollArea {{ background: transparent; border: none; }}
+/* The step arrows at the ends of a scroll bar. Styling the bar and its
+   handle but not these leaves Fusion to draw them: a small white-edged box
+   under every bar. The bars here are thin enough to do without them. */
+QScrollBar::add-line, QScrollBar::sub-line {{
+    width: 0; height: 0; border: none; background: none;
+}}
+QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
+QAbstractScrollArea::corner {{ background: transparent; border: none; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; }}
 QScrollBar::handle:vertical {{ background: {BORDER_HOVER}; border-radius: 5px; min-height: 24px; }}
 QScrollBar:horizontal {{ background: transparent; height: 10px; }}
@@ -252,6 +301,14 @@ def apply(app):
     palette.setColor(QPalette.Highlight, QColor(ACCENT))
     palette.setColor(QPalette.HighlightedText, QColor("#14151F"))
     palette.setColor(QPalette.PlaceholderText, QColor(FG_DISABLED))
+    # The bevel shades. Unset, Fusion derives them from its light default
+    # and draws near-white lines — under the tabs, around frames — wherever
+    # the stylesheet does not say otherwise.
+    palette.setColor(QPalette.Light, QColor(BORDER_HOVER))
+    palette.setColor(QPalette.Midlight, QColor(BORDER))
+    palette.setColor(QPalette.Mid, QColor(BORDER))
+    palette.setColor(QPalette.Dark, QColor(BG_STAGE))
+    palette.setColor(QPalette.Shadow, QColor("#000000"))
     palette.setColor(QPalette.Disabled, QPalette.Text, QColor(FG_DISABLED))
     palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(FG_DISABLED))
     app.setPalette(palette)

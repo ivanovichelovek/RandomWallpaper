@@ -75,6 +75,19 @@ def main():
     app.processEvents()
     check("window shows without raising", True)
 
+    # Workers hand their results back with post_to_ui; it has to land on the
+    # UI thread, or every widget it touches is touched from the wrong one.
+    import threading
+    import time
+    hit = []
+    threading.Thread(target=lambda: win.post_to_ui(
+        lambda: hit.append(threading.current_thread() is threading.main_thread())
+    )).start()
+    deadline = time.time() + 2
+    while not hit and time.time() < deadline:
+        app.processEvents()
+    check("post_to_ui runs on the UI thread", hit == [True])
+
     win.close()
     check("window closes without raising", True)
 

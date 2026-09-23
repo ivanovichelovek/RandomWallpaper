@@ -575,7 +575,7 @@ check("delete kept every saved file",
 # ── cache prune ─────────────────────────────────────────────────────────────
 orphan = rw.CACHE_DIR / "pending-orphan.jpg"; orphan.write_bytes(b"x")
 keep = rw.CACHE_DIR / "keepme.txt"; keep.write_bytes(b"x")
-rw.prune_cache()
+rw.prune_cache(now=orphan.stat().st_mtime + 2 * rw.PENDING_MAX_AGE)
 check("prune removed the orphan", not orphan.exists())
 check("prune left unrelated files", keep.exists())
 
@@ -632,6 +632,10 @@ check("a second tick on the new day does nothing",
 # Over many days every pinned wallpaper should come up, and never twice in a
 # row — with four pinned, "random" that repeats is indistinguishable from a
 # rotation that is not happening.
+# Seeded: with 13 draws among 4, an unlucky run can miss one outright, and a
+# test that fails one run in ten says nothing about the rotation.
+import random  # noqa: E402
+random.seed(20261226)
 seen, previous, last_day = set(), applied[-1], day2
 repeats = 0
 for i in range(3, 16):
@@ -681,6 +685,326 @@ check("a hand-set wallpaper stops the nightly draw too",
                   today=last_day + timedelta(days=2)) == 0
       and len(applied) == before
       and draw_prefs["auto_enabled"] is False)
+
+# ── the timer, per platform ─────────────────────────────────────────────────
+# The macOS and Windows schedulers can only be registered on their own OS, but
+# what gets registered is plain data, and it is checked here on any OS: a
+# midnight tick, an hourly one, one at login, and a catch-up for a missed one.
+import plistlib  # noqa: E402
+import xml.etree.ElementTree as ET  # noqa: E402
+from randomwallpaper import schedule  # noqa: E402
+
+agent = plistlib.loads(schedule.launch_agent_plist(
+    ["/Applications/R & W.app/Contents/MacOS/random-wallpaper"], "/src", "/l.log"))
+check("LaunchAgent runs --auto quietly",
+      agent["ProgramArguments"][-2:] == ["--auto", "--quiet"]
+      and agent["ProgramArguments"][0].endswith("R & W.app/Contents/MacOS/random-wallpaper"))
+check("LaunchAgent fires at midnight",
+      agent["StartCalendarInterval"] == {"Hour": 0, "Minute": 0})
+check("LaunchAgent fires every minute and at login",
+      agent["StartInterval"] == 60 and agent["RunAtLoad"] is True)
+
+ns = {"t": schedule.TASK_NS}
+xml = schedule.task_xml([r"C:\Users\a & b\random-wallpaper-gui.exe"], r"C:\src",
+                        r"PC\me", date(2026, 9, 23))
+task = ET.fromstring(xml.split("?>", 1)[1])
+daily = task.find("t:Triggers/t:CalendarTrigger", ns)
+check("task fires daily from local midnight",
+      daily.findtext("t:StartBoundary", namespaces=ns) == "2026-09-23T00:00:00"
+      and daily.findtext("t:ScheduleByDay/t:DaysInterval", namespaces=ns) == "1")
+check("and every minute after it",
+      daily.findtext("t:Repetition/t:Interval", namespaces=ns) == "PT1M"
+      and daily.findtext("t:Repetition/t:Duration", namespaces=ns) == "P1D")
+check("task fires at this user's logon and unlock",
+      task.findtext("t:Triggers/t:LogonTrigger/t:UserId", namespaces=ns) == r"PC\me"
+      and task.findtext("t:Triggers/t:SessionStateChangeTrigger/t:StateChange",
+                        namespaces=ns) == "SessionUnlock")
+settings = task.find("t:Settings", ns)
+check("a missed tick is caught up, on battery too",
+      settings.findtext("t:StartWhenAvailable", namespaces=ns) == "true"
+      and settings.findtext("t:DisallowStartIfOnBatteries", namespaces=ns) == "false"
+      and settings.findtext("t:StopIfGoingOnBatteries", namespaces=ns) == "false")
+check("task runs unelevated, in the user's session",
+      task.findtext("t:Principals/t:Principal/t:LogonType", namespaces=ns) == "InteractiveToken"
+      and task.findtext("t:Principals/t:Principal/t:RunLevel", namespaces=ns) == "LeastPrivilege")
+check("task runs the program with --auto --quiet",
+      task.findtext("t:Actions/t:Exec/t:Command", namespaces=ns)
+      == r"C:\Users\a & b\random-wallpaper-gui.exe"
+      and task.findtext("t:Actions/t:Exec/t:Arguments", namespaces=ns) == "--auto --quiet")
+check("task carries the version marker",
+      schedule.MARKER in task.findtext("t:RegistrationInfo/t:Description", namespaces=ns))
+
+service, timer = schedule.linux_units(["/opt/rw"])
+check("systemd timer ticks every minute, to the second",
+      "OnCalendar=minutely" in timer and "AccuracySec=1s" in timer
+      and "Persistent=true" in timer and schedule.MARKER in timer)
+check("systemd service runs --auto --quiet",
+      "ExecStart=/opt/rw --auto --quiet" in service)
+
+# What is installed decides what Settings offers: a missing or old timer of
+# ours is (re)written, a symlinked one — managed from a dotfiles repo — never.
+if rw.IS_LINUX if hasattr(rw, "IS_LINUX") else sys.platform.startswith("linux"):
+    unit = schedule._linux_unit_dir() / "random-wallpaper-auto.timer"
+    check("no timer reads as missing", schedule.status() == "missing")
+    unit.parent.mkdir(parents=True, exist_ok=True)
+    unit.write_text("[Timer]\nOnCalendar=hourly\n")
+    check("an old timer of ours reads as outdated", schedule.status() == "outdated")
+    unit.write_text(timer)
+    unit.with_suffix(".service").write_text(
+        schedule.linux_units(schedule._executable())[0])
+    check("the current one reads as current", schedule.status() == "current")
+    unit.with_suffix(".service").write_text(
+        schedule.linux_units(["/some/other/copy"])[0])
+    check("one running another copy of the app is outdated",
+          schedule.status() == "outdated")
+    unit.with_suffix(".service").unlink()
+    unit.unlink()
+    elsewhere = FAKE / "dotfiles.timer"
+    elsewhere.write_text("[Timer]\nOnCalendar=hourly\n")
+    unit.symlink_to(elsewhere)
+    check("a symlinked timer is foreign", schedule.status() == "foreign")
+    check("and ensure_installed leaves it alone",
+          schedule.ensure_installed() is False
+          and elsewhere.read_text() == "[Timer]\nOnCalendar=hourly\n")
+    unit.unlink()
+
+# A frozen onefile build unpacks itself to a temporary directory that is gone
+# once the installing process exits: the timer must point at the binary, and
+# start in the binary's folder, never at anything under that directory.
+frozen_exe = FAKE / "dist" / "random-wallpaper.exe"
+frozen_exe.parent.mkdir(parents=True)
+real_executable = sys.executable
+sys.frozen, sys.executable = True, str(frozen_exe)
+try:
+    check("a frozen build schedules itself", schedule._executable() == [str(frozen_exe)])
+    check("and starts in its own folder, not its unpack dir",
+          Path(schedule._workdir()) == frozen_exe.parent.resolve())
+finally:
+    del sys.frozen
+    sys.executable = real_executable
+
+# ── how often inside a period ───────────────────────────────────────────────
+from datetime import datetime as dt  # noqa: E402
+
+check("times parse, sort and dedupe",
+      rw.parse_times("19:30, 7:00; 07:00") == [(7, 0), (19, 30)])
+for bad in ("25:00", "7", "07:60", "", "seven"):
+    try:
+        rw.parse_times(bad)
+        check(f"{bad!r} is refused", False)
+    except ValueError:
+        check(f"{bad!r} is refused", True)
+
+mid = dict(rw.DEFAULTS)
+check("midnight's slot is the date, as the old state file's day was",
+      rw.current_slot(mid, dt(2026, 9, 23, 15, 4)) == "2026-09-23")
+every = dict(rw.DEFAULTS, change_mode="every", change_every=90)
+check("an interval's slot starts at the block the time falls in",
+      rw.current_slot(every, dt(2026, 9, 23, 15, 4)) == "2026-09-23T15:00"
+      and rw.current_slot(every, dt(2026, 9, 23, 16, 29)) == "2026-09-23T15:00"
+      and rw.current_slot(every, dt(2026, 9, 23, 16, 30)) == "2026-09-23T16:30")
+check("an interval that does not divide the day restarts at midnight",
+      rw.current_slot(dict(every, change_every=420), dt(2026, 9, 24, 0, 5))
+      == "2026-09-24T00:00")
+check("an interval below the floor is raised to it",
+      rw.current_slot(dict(every, change_every=1), dt(2026, 9, 23, 15, 14))
+      == "2026-09-23T15:00")
+times = dict(rw.DEFAULTS, change_mode="times", change_times=["07:00", "19:30"])
+check("set times: the latest one passed",
+      rw.current_slot(times, dt(2026, 9, 23, 19, 30)) == "2026-09-23T19:30"
+      and rw.current_slot(times, dt(2026, 9, 23, 12, 0)) == "2026-09-23T07:00")
+check("before the first, it is still yesterday's last",
+      rw.current_slot(times, dt(2026, 9, 23, 6, 59)) == "2026-09-22T19:30")
+check("unreadable times fall back to midnight",
+      rw.current_slot(dict(times, change_times=["nope"]), dt(2026, 9, 23, 12, 0))
+      == "2026-09-23")
+
+# The rotation through the day. download() is stubbed: each call is a new
+# file, so "a fresh wallpaper each change" is countable offline.
+real_download = rw.download
+downloads = []
+
+
+def fake_download(prefs):
+    downloads.append(prefs["theme"])
+    tmp = rw.CACHE_DIR / f"dl-{len(downloads)}.jpg"
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    tmp.write_bytes(str(len(downloads)).encode())
+    return {"path": tmp, "ext": ".jpg"}
+
+
+rw.download = fake_download
+rw.set_wallpaper, rw.wallpaper_now = fake_set, fake_get
+rw.STATE_FILE.unlink(missing_ok=True)
+screen[:] = []
+day = date(2026, 7, 15)                 # mid-summer, no holiday near
+summer = rw.theme_pool("summer")
+shutil.rmtree(summer, ignore_errors=True)
+hourly = dict(rw.DEFAULTS, change_mode="every", change_every=60, auto_enabled=True)
+at = lambda h, m=0: dt(day.year, day.month, day.day, h, m)  # noqa: E731
+
+before = len(applied)
+rw.run_auto(hourly, log=lines.append, now=at(10, 5))
+first = rw.load_state()["path"]
+check("through the day, nothing pinned: the first tick downloads",
+      len(downloads) == 1 and len(applied) == before + 1)
+rw.run_auto(hourly, log=lines.append, now=at(10, 59))
+check("a tick in the same slot does nothing", len(downloads) == 1)
+rw.run_auto(hourly, log=lines.append, now=at(11, 0))
+check("the next slot downloads a fresh one",
+      len(downloads) == 2 and rw.load_state()["path"] != first
+      and rw.load_state()["slot"] == "2026-07-15T11:00")
+
+quiet_lines = []
+rw.run_auto(hourly, log=quiet_lines.append, now=at(11, 30), quiet=True)
+check("a quiet tick with nothing to do prints nothing", quiet_lines == [])
+
+summer.mkdir(parents=True, exist_ok=True)
+only = summer / "only.jpg"; only.write_bytes(b"sun")
+rw.run_auto(hourly, log=lines.append, now=at(12, 0))
+check("one pinned wallpaper wins over downloading",
+      fake_get() == only and len(downloads) == 2)
+n = len(applied)
+rw.run_auto(hourly, log=lines.append, now=at(13, 0))
+check("and with only one there is nothing to change to",
+      len(applied) == n and len(downloads) == 2)
+other = summer / "other.jpg"; other.write_bytes(b"sea")
+rw.run_auto(hourly, log=lines.append, now=at(14, 0))
+check("two pinned: the next slot switches between them, no download",
+      fake_get() == other and len(downloads) == 2)
+
+# A state file from before slots — only "day" — is up to date at midnight.
+st = rw.load_state(); st.pop("slot", None); st["day"] = day.isoformat()
+rw.save_state(st)
+n = len(applied)
+rw.run_auto(dict(hourly, change_mode="midnight"), log=lines.append, now=at(15, 0))
+check("an old state file does not cause a redraw", len(applied) == n)
+shutil.rmtree(summer)
+rw.save_state({})           # nothing up: what follows is about the network
+
+
+# A failed download pauses scheduled ticks instead of retrying every minute.
+def offline(prefs):
+    raise rw.FetchError("offline")
+
+
+rw.download = offline
+check("a failed download reports failure",
+      rw.run_auto(hourly, log=lines.append, now=at(16, 0)) == 1)
+calls = []
+rw.download = lambda prefs: calls.append(1) or fake_download(prefs)
+rw.run_auto(hourly, log=lines.append, now=at(16, 5))
+check("the next few minutes leave the network alone", calls == [])
+rw.run_auto(hourly, log=lines.append, now=at(16, 11))
+check("after the pause it tries again", calls == [1]
+      and "failed_at" not in rw.load_state())
+
+rw.download = real_download
+
+# A window's frames wait in the cache as pending-* files. Pruning — which
+# every launch does — must leave young ones to whichever window owns them.
+import time as _time  # noqa: E402
+rw.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+young = rw.CACHE_DIR / "pending-young.jpg"; young.write_bytes(b"y")
+old_one = rw.CACHE_DIR / "pending-old.jpg"; old_one.write_bytes(b"o")
+os.utime(old_one, (_time.time() - 2 * rw.PENDING_MAX_AGE,) * 2)
+rw.prune_cache()
+check("pruning keeps a frame an open window may be showing", young.exists())
+check("but drops one orphaned days ago", not old_one.exists())
+
+# ── updates ─────────────────────────────────────────────────────────────────
+import hashlib  # noqa: E402
+import re  # noqa: E402
+from randomwallpaper import __version__, update  # noqa: E402
+
+pyproject = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text()
+check("pyproject's version is __version__",
+      re.search(r'^version = "([^"]+)"', pyproject, re.M).group(1) == __version__)
+check("versions compare as numbers",
+      update.parse_version("v1.10.0") > update.parse_version("1.9.9")
+      and update.parse_version("1.1") < update.parse_version("1.1.1"))
+
+# The release workflow names every file with asset_name(); these pin the
+# names, so a change there cannot quietly leave installed copies unable to
+# find their own update.
+names = {
+    ("linux", "x86_64", "pacman"): "random-wallpaper-1.2.3-1-x86_64.pkg.tar.zst",
+    ("linux", "x86_64", "deb"): "random-wallpaper_1.2.3_amd64.deb",
+    ("linux", "x86_64", "rpm"): "random-wallpaper-1.2.3-1.x86_64.rpm",
+    ("windows", "AMD64", None): "RandomWallpaper-1.2.3-windows-x64-setup.exe",
+    ("macos", "arm64", None): "RandomWallpaper-1.2.3-macos-arm64.pkg",
+}
+check("release asset names are pinned",
+      all(update.asset_name("1.2.3", kind=k, machine=m, fmt=f) == want
+          for (k, m, f), want in names.items()))
+check("a run from source has no asset", update.asset_name("1.2.3", kind="source") is None)
+check("this test run counts as source", update.install_kind() == "source")
+
+check("SHA256SUMS parses both sha256sum forms",
+      update.parse_sums("abc  a.deb\nDEF *b.rpm\n") == {"a.deb": "abc", "b.rpm": "def"})
+
+# A stand-in release, served from file:// URLs: the feed, an asset, its sums.
+rel = FAKE / "release"; rel.mkdir()
+payload = b"the new version" * 1000
+(rel / "pkg.deb").write_bytes(payload)
+(rel / "SHA256SUMS").write_text(f"{hashlib.sha256(payload).hexdigest()}  pkg.deb\n")
+(rel / "latest.json").write_text(json.dumps({
+    "tag_name": "v99.0.0", "html_url": "https://example.invalid/r",
+    "assets": [{"name": n, "browser_download_url": (rel / n).as_uri()}
+               for n in ("pkg.deb", "SHA256SUMS")]}))
+release, newer = update.check((rel / "latest.json").as_uri())
+check("the feed is read and a higher version is newer",
+      release["version"] == "99.0.0" and newer)
+
+seen_progress = []
+got = update.download(release, "pkg.deb", FAKE,
+                      progress=lambda d, t: seen_progress.append(d))
+check("a download that matches its checksum is kept",
+      got.read_bytes() == payload and seen_progress[-1] == len(payload))
+got.unlink()
+
+(rel / "pkg.deb").write_bytes(payload + b"tampered")
+try:
+    update.download(release, "pkg.deb", FAKE)
+    check("a download that does not match is refused", False)
+except update.UpdateError:
+    check("a download that does not match is refused", True)
+check("and leaves nothing behind", not list(FAKE.glob(".update-*")))
+
+try:
+    update.download(dict(release, assets={"pkg.deb": release["assets"]["pkg.deb"]}),
+                    "pkg.deb", FAKE)
+    check("a release without SHA256SUMS is refused", False)
+except update.UpdateError:
+    check("a release without SHA256SUMS is refused", True)
+
+try:
+    update.apply(release)
+    check("a source install is never replaced", False)
+except update.UpdateError:
+    check("a source install is never replaced", True)
+
+check("pacman installs a package file with -U",
+      update.linux_install_command("pacman", "/tmp/x.pkg.tar.zst")
+      == ["pacman", "-U", "--noconfirm", "/tmp/x.pkg.tar.zst"])
+check("apt gets an absolute path, or it reads a package name",
+      update.linux_install_command("deb", "x.deb")[-1].startswith("/"))
+
+# The Windows console twin schedules the windowed exe, not itself.
+win_dir = FAKE / "winapp"; win_dir.mkdir()
+(win_dir / "random-wallpaper.exe").write_bytes(b"")
+(win_dir / "random-wallpaper-cli.exe").write_bytes(b"")
+real_executable = sys.executable
+sys.frozen, sys.executable = True, str(win_dir / "random-wallpaper-cli.exe")
+try:
+    check("the -cli exe schedules the windowed one",
+          schedule._executable() == [str(win_dir / "random-wallpaper.exe")])
+finally:
+    del sys.frozen
+    sys.executable = real_executable
+
+check("the service skips quietly once the program is uninstalled",
+      "ConditionPathExists=/opt/rw" in schedule.linux_units(["/opt/rw"])[0])
 
 shutil.rmtree(FAKE, ignore_errors=True)
 print(f"\n{ok} passed, {fail} failed")

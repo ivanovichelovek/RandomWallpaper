@@ -95,6 +95,12 @@ class ReelPage(QWidget):
         self.picture = QLabel()
         self.picture.setAlignment(Qt.AlignCenter)
         self.picture.setScaledContents(False)
+        # Ignored, with a token minimum: a QLabel otherwise asks for its
+        # pixmap's full size as its minimum, and a 2560×1440 frame shown
+        # before the label has been laid out pushes the whole window past the
+        # screen — in a tiling compositor, past the tile it was given.
+        self.picture.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        self.picture.setMinimumSize(1, 1)
         self.stack.addWidget(self.picture)
 
         self.message = QLabel()
@@ -117,6 +123,7 @@ class ReelPage(QWidget):
         meta = QVBoxLayout()
         meta.setSpacing(2)
         meta_widget = QWidget()
+        meta_widget.setObjectName("barMeta")
         meta_widget.setLayout(meta)
         bottom_layout.addWidget(meta_widget, 1)
 
@@ -128,6 +135,11 @@ class ReelPage(QWidget):
         self.frame_meta.setProperty("class", "mono")
         self.frame_meta.setStyleSheet("color:#8B90A8; font-family:monospace; font-size:11px;")
         meta.addWidget(self.frame_meta)
+        # A long file name or credit is clipped, not allowed to set the
+        # window's minimum width.
+        for label in (self.frame_name, self.frame_meta):
+            label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            label.setMinimumWidth(1)
 
         self.prev_btn = QToolButton()
         self.prev_btn.setText("‹")
@@ -316,11 +328,10 @@ class ReelPage(QWidget):
     def _set_picture(self, pix):
         self._current_pix = pix
         target = self.picture.size()
-        if target.width() > 10 and target.height() > 10:
-            scaled = pix.scaled(target, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        else:
-            scaled = pix
-        self.picture.setPixmap(scaled)
+        if target.width() <= 10 or target.height() <= 10:
+            return          # not laid out yet; resizeEvent comes back to it
+        self.picture.setPixmap(
+            pix.scaled(target, Qt.KeepAspectRatio, Qt.SmoothTransformation))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
