@@ -21,6 +21,7 @@ env:
 
 jobs:
   version:
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.v.outputs.version }}
@@ -38,6 +39,8 @@ jobs:
           fi
 
   linux:
+    # A hung step fails in minutes, not after GitHub's six-hour default.
+    timeout-minutes: 30
     needs: version
     # The oldest supported Ubuntu sets the glibc floor for everything bundled.
     runs-on: ubuntu-22.04
@@ -73,7 +76,8 @@ jobs:
           if-no-files-found: error
 
   linux-install:
-    needs: linux
+    timeout-minutes: 20
+    needs: [version, linux]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -82,40 +86,34 @@ jobs:
           - image: archlinux:latest
             prepare: pacman -Syu --noconfirm
             install: pacman -U --noconfirm /p/*.pkg.tar.zst
+            remove: pacman -R --noconfirm random-wallpaper
           - image: debian:12
             prepare: apt-get update
             install: apt-get install -y /p/*.deb
+            remove: apt-get remove -y random-wallpaper
           - image: ubuntu:22.04
             prepare: apt-get update
             install: apt-get install -y /p/*.deb
+            remove: apt-get remove -y random-wallpaper
           - image: fedora:latest
             prepare: "true"
             install: dnf install -y /p/*.rpm
+            remove: dnf remove -y random-wallpaper
     steps:
+      - uses: actions/checkout@v4
+        with: { sparse-checkout: tests/install }
       - uses: actions/download-artifact@v4
         with: { name: linux, path: p }
-      - name: Install with the package manager, then run it
+      - name: Install, check, run, remove
         run: |
-          docker run --rm -v "$PWD/p:/p:ro" "${{ matrix.image }}" sh -euxc '
-            ${{ matrix.prepare }}
-            ${{ matrix.install }}
-            random-wallpaper --version
-            random-wallpaper --period
-            # Every Qt plugin that decides whether a window can open at all
-            # must find its system libraries — the package depends are
-            # what provide them.
-            cd /opt/random-wallpaper/_internal/PySide6/Qt/plugins
-            missing=$(for f in platforms/*.so wayland-*/*.so; do
-                LD_LIBRARY_PATH=/opt/random-wallpaper/_internal:/opt/random-wallpaper/_internal/PySide6/Qt/lib \
-                  ldd "$f" | grep "not found" || true; done)
-            [ -z "$missing" ] || { echo "$missing"; exit 1; }
-            # The window itself, headless: still running after 8 s means it
-            # started; anything else is a crash.
-            rc=0; QT_QPA_PLATFORM=offscreen timeout 8 random-wallpaper || rc=$?
-            [ "$rc" -eq 124 ]
-          '
+          docker run --rm -v "$PWD/p:/p:ro" -v "$PWD/tests/install:/t:ro" \
+            "${{ matrix.image }}" sh -c '
+              ${{ matrix.prepare }} >/dev/null &&
+              sh /t/check_linux.sh "${{ needs.version.outputs.version }}" \
+                "${{ matrix.install }}" "${{ matrix.remove }}"'
 
   windows:
+    timeout-minutes: 40
     needs: version
     runs-on: windows-latest
     steps:
@@ -143,24 +141,11 @@ jobs:
           if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
           & $iscc "/DAppVersion=$v" "/DOutputName=$name" packaging\windows\installer.iss
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-      - name: Install it silently, run it, uninstall it
+      - name: Install, check, run, uninstall
         shell: pwsh
         run: |
-          $setup = Get-ChildItem dist\installer\*.exe | Select-Object -First 1
-          Start-Process $setup.FullName -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART" -Wait
-          $app = "$env:LOCALAPPDATA\Programs\Random Wallpaper"
-          & "$app\random-wallpaper-cli.exe" --version
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          # [Run] started the window after installing; it has to go before
-          # the uninstaller can remove its files.
-          Stop-Process -Name random-wallpaper -Force -ErrorAction SilentlyContinue
-          Start-Sleep 2
-          # The uninstaller copies itself to %TEMP% and returns at once, so
-          # -Wait proves nothing; wait for the files to go instead.
-          Start-Process "$app\unins000.exe" -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES" -Wait
-          $deadline = (Get-Date).AddSeconds(90)
-          while ((Test-Path "$app\random-wallpaper.exe") -and (Get-Date) -lt $deadline) { Start-Sleep 2 }
-          if (Test-Path "$app\random-wallpaper.exe") { Write-Error "uninstall left the app behind"; exit 1 }
+          $setup = (Get-ChildItem dist\installer\*.exe | Select-Object -First 1).FullName
+          tests\install\check_windows.ps1 -Version "${{ needs.version.outputs.version }}" -Setup $setup
       - uses: actions/upload-artifact@v4
         with:
           name: windows
@@ -168,6 +153,7 @@ jobs:
           if-no-files-found: error
 
   macos:
+    timeout-minutes: 30
     needs: version
     # Apple silicon, macOS 13+ (what the PySide6 wheel is built for). An
     # Intel build would need an Intel runner; see README.
@@ -186,16 +172,8 @@ jobs:
       - run: uv run pyinstaller --noconfirm packaging/pyinstaller.spec
       - run: packaging/macos/build-pkg.sh
         env: { PYTHON: .venv/bin/python }
-      - name: Install it with Installer, then run it
-        run: |
-          pkg=$(ls dist/installer/*.pkg)
-          sudo installer -pkg "$pkg" -target /
-          # In /Applications, not "upgraded" in place wherever the build
-          # left a copy of the same bundle id — the relocation trap.
-          test -x "/Applications/Random Wallpaper.app/Contents/MacOS/random-wallpaper"
-          app="/Applications/Random Wallpaper.app/Contents/MacOS/random-wallpaper"
-          "$app" --version
-          "$app" --version | grep -q "${{ needs.version.outputs.version }} (macOS app)"
+      - name: Install, check, run, remove
+        run: tests/install/check_macos.sh "${{ needs.version.outputs.version }}" "$(ls dist/installer/*.pkg)"
       - uses: actions/upload-artifact@v4
         with:
           name: macos
@@ -203,6 +181,7 @@ jobs:
           if-no-files-found: error
 
   publish:
+    timeout-minutes: 15
     if: github.ref_type == 'tag'
     needs: [version, linux-install, windows, macos]
     runs-on: ubuntu-latest

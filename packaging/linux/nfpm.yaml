@@ -46,16 +46,20 @@ scripts:
   postremove: packaging/linux/postinstall.sh
 
 # Everything else Qt needs ships inside the tree; these are what it takes
-# from the system — GL/EGL, the Wayland client and xcb, which have to match
-# the machine's own drivers and display server.
+# from the system — GL/EGL, the Wayland client libraries (wayland-egl is a
+# package of its own outside Arch), xcb and libdrm, which have to match the
+# machine's own drivers and display server. release.yml's container jobs
+# fail on any plugin with an unresolved library, so a gap here shows up
+# before a release does.
 archlinux:
   packager: ivanovichelovek <ivanovichelovek@users.noreply.github.com>
 
 overrides:
   archlinux:
-    depends: [libglvnd, wayland, libxcb]
+    depends: [libglvnd, wayland, libxcb, libdrm]
   deb:
-    depends: [libegl1, libgl1, libwayland-client0, libwayland-cursor0, libxcb1]
+    depends: [libegl1, libgl1, libwayland-client0, libwayland-cursor0,
+              libwayland-egl1, libxcb1, libdrm2]
   rpm:
     # Sonames rather than package names: Fedora and openSUSE call these
     # packages different things, but both resolve a soname.
@@ -64,4 +68,6 @@ overrides:
       - libGL.so.1()(64bit)
       - libwayland-client.so.0()(64bit)
       - libwayland-cursor.so.0()(64bit)
+      - libwayland-egl.so.1()(64bit)
       - libxcb.so.1()(64bit)
+      - libdrm.so.2()(64bit)
