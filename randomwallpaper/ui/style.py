@@ -177,6 +177,18 @@ QPushButton.danger {{ color: {DANGER}; border-color: {DANGER_BORDER}; }}
 QPushButton.danger:hover {{ background: {DANGER_BG}; border-color: {DANGER_BORDER}; }}
 
 QPushButton.icon {{ padding: 6px 12px; font-size: 15px; }}
+/* The ‹ › frame buttons are QToolButtons; unstyled, Windows and macOS draw
+   them as light native squares on the dark bar. */
+QToolButton.icon {{
+    background: {BG_BTN};
+    color: {FG};
+    border: 1px solid {BORDER};
+    border-radius: 5px;
+    padding: 4px 10px;
+    font-size: 15px;
+}}
+QToolButton.icon:hover {{ background: {BG_BTN_HOVER}; border-color: {BORDER_HOVER}; }}
+QToolButton.icon:disabled {{ color: {FG_DISABLED}; background: #141622; border-color: {BG_BTN}; }}
 
 #reel {{ background: {BG_STAGE}; border-top: 1px solid {BORDER}; }}
 QToolButton.reelFrame {{
@@ -286,8 +298,36 @@ QMenu::item:selected {{ background: {BG_BTN_HOVER}; }}
 """
 
 
+MONO_CANDIDATES = ["JetBrains Mono", "Cascadia Mono", "Consolas", "SF Mono",
+                   "Menlo", "DejaVu Sans Mono", "Liberation Mono"]
+SANS_CANDIDATES = ["Segoe UI", "Noto Sans", "Helvetica Neue", "Cantarell"]
+
+
+def _first_installed(candidates, fallback):
+    from PySide6.QtGui import QFontDatabase
+    installed = set(QFontDatabase.families())
+    for family in candidates:
+        if family in installed:
+            return family
+    return QFontDatabase.systemFont(fallback).family()
+
+
 def apply(app):
-    app.setStyleSheet(QSS)
+    """The stylesheet and palette, with the fonts this machine actually has.
+
+    A stylesheet's font-family list is not a fallback chain in Qt: it takes
+    the first name, and when that is not installed — JetBrains Mono on a
+    stock Windows or Mac — it falls straight back to the default sans. So
+    the families are chosen here, from what is installed, and "monospace"
+    (which the inline styles use, and which only fontconfig knows) is
+    mapped onto the same choice.
+    """
+    from PySide6.QtGui import QFont, QFontDatabase
+    mono = _first_installed(MONO_CANDIDATES, QFontDatabase.FixedFont)
+    sans = _first_installed(SANS_CANDIDATES, QFontDatabase.GeneralFont)
+    QFont.insertSubstitution("monospace", mono)
+    app.setStyleSheet(QSS.replace(MONO_FONT, f'"{mono}"')
+                         .replace(SANS_FONT, f'"{sans}"'))
     palette = QPalette()
     palette.setColor(QPalette.Window, QColor(BG))
     palette.setColor(QPalette.WindowText, QColor(FG))

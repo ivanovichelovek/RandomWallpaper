@@ -65,6 +65,12 @@ class SettingsPage(QWidget):
         root_layout.addWidget(card)
         form = QFormLayout()
         form.setSpacing(10)
+        # The same form everywhere. Left to the platform, macOS right-aligns
+        # the labels, keeps each field at its size hint and centres the lot.
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        form.setRowWrapPolicy(QFormLayout.DontWrapRows)
         card_layout.addLayout(form)
 
         self.source = self._combo([s[0] for s in core.SOURCES])

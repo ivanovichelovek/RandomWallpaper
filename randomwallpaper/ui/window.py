@@ -44,7 +44,17 @@ class Reel(QMainWindow):
         self.app = app
         self.prefs = prefs
         self.setWindowTitle("Random Wallpaper")
-        self.resize(1000, 760)
+        # The size it was designed at, but never more than the screen can
+        # show: 1000×760 on a 1024×768 laptop puts the reel strip under the
+        # taskbar and the frame counter past the right edge.
+        from PySide6.QtGui import QGuiApplication
+        screen = QGuiApplication.primaryScreen()
+        room = screen.availableGeometry() if screen else None
+        width, height = 1000, 760
+        if room is not None:
+            width = min(width, int(room.width() * 0.92))
+            height = min(height, int(room.height() * 0.92))
+        self.resize(width, height)
 
         central = QWidget()
         central.setObjectName("reelRoot")
@@ -81,6 +91,10 @@ class Reel(QMainWindow):
         # of a dark window. The top bar already draws the border that belongs
         # there.
         self.tabs.tabBar().setDrawBase(False)
+        # macOS sizes tabs by its own metrics, not the stylesheet's padding,
+        # and then elides the labels to fit: "Rand…", "Downloa…".
+        self.tabs.tabBar().setElideMode(Qt.ElideNone)
+        self.tabs.tabBar().setExpanding(False)
         root.addWidget(self.tabs, 1)
 
         self.reel_page = ReelPage(self)
