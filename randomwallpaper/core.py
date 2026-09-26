@@ -108,6 +108,11 @@ MIN_CHANGE_EVERY = 15
 # half before it gives up — without a pause an outage would be retried back
 # to back.
 FAILED_BACKOFF = timedelta(minutes=10)
+# A stranger on screen has to still be there this long after it was first
+# seen before the rotation switches itself off. Just under a minute, so the
+# next minutely tick confirms it — but not the tick a few seconds later that
+# a wake from sleep lines up right behind the catch-up one.
+HAND_SET_CONFIRM = timedelta(seconds=50)
 
 # ── themes ──────────────────────────────────────────────────────────────────
 # A theme is a season or a holiday, and each source is told about it in its own
@@ -967,11 +972,36 @@ def run_auto(prefs, force=False, log=print, today=None, now=None, quiet=False):
     #
     # --force is how you say "yes, I mean it" — it is what --auto-on uses to
     # resume, and it is deliberately the only way past this.
-    if prefs["auto_enabled"] and not force and wallpaper_was_changed_by_hand(state):
-        set_auto_enabled(prefs, False)
-        log("a wallpaper was set by hand — automatic rotation switched off. "
-            "Turn it back on in Settings, or with --auto-on.")
-        return 0
+    #
+    # Seen once is not enough. Right after a wake from sleep or a login the
+    # desktop can answer with something it is not showing — a shell not up
+    # yet, a default picture — and that single wrong answer used to switch
+    # the rotation off for good. So the first sighting is only noted, nothing
+    # is changed on screen, and it takes a stranger still there a tick later
+    # to latch.
+    if prefs["auto_enabled"] and not force:
+        if wallpaper_was_changed_by_hand(state):
+            try:
+                since = now - datetime.fromisoformat(state["stranger_since"])
+            except (KeyError, TypeError, ValueError):
+                since = None
+            if since is None or since < timedelta(0):
+                state["stranger_since"] = now.isoformat(timespec="seconds")
+                save_state(state)
+                log("the wallpaper on screen is not the one the rotation set — "
+                    "checking again before switching the rotation off")
+                return 0
+            if since < HAND_SET_CONFIRM:
+                note("still waiting to confirm a wallpaper set by hand")
+                return 0
+            del state["stranger_since"]
+            save_state(state)
+            set_auto_enabled(prefs, False)
+            log("a wallpaper was set by hand — automatic rotation switched off. "
+                "Turn it back on in Settings, or with --auto-on.")
+            return 0
+        if state.pop("stranger_since", None) is not None:
+            save_state(state)       # a false alarm, or no answer: start over
 
     if not prefs["auto_enabled"] and not force:
         note(f"automatic rotation is off (today is {period})")

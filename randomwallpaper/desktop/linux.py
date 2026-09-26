@@ -209,17 +209,24 @@ def wallpaper_now():
     None means "do not know", never "none is set": every caller treats it as a
     reason to do nothing, which is what keeps a compositor that cannot be
     queried from looking exactly like the user choosing a wallpaper by hand.
+
+    Only the first backend is asked — the one set_wallpaper writes to. When it
+    has no answer, falling through to the next one is asking a desktop that
+    is not drawing the wallpaper: right after a resume from sleep, or at login
+    before the shell is up, Noctalia does not answer yet, and gsettings still
+    holds GNOME's default Adwaita picture. That read as a wallpaper set by
+    hand and switched the rotation off.
     """
-    for _, _, getter in available():
-        if getter is None:
-            continue
-        try:
-            answer = getter()
-        except OSError:
-            continue
-        if answer:
-            return answer
-    return None
+    found = available()
+    if not found:
+        return None
+    _, _, getter = found[0]
+    if getter is None:
+        return None
+    try:
+        return getter() or None
+    except OSError:
+        return None
 
 
 def pictures_dir():

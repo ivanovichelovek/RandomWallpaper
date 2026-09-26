@@ -347,11 +347,27 @@ rw.set_wallpaper(unrelated)          # a wallpaper chosen from anywhere at all
 check("a hand-set wallpaper leaves the rotation's own record alone",
       rw.STATE_FILE.read_text() == state_before)
 
+# Seen once, it is only noted: right after a wake from sleep or a login the
+# desktop can answer with something it is not showing, and one such answer
+# used to switch the rotation off for good.
+from datetime import datetime  # noqa: E402
+
 before_count = len(applied)
-check("the next tick notices and switches the rotation off",
-      rw.run_auto(auto_prefs, log=lines.append) == 0
-      and auto_prefs["auto_enabled"] is False)
-check("the tick that noticed changed no wallpaper", len(applied) == before_count)
+noticed = datetime.now()
+check("the next tick notices, but does not switch off on one sighting",
+      rw.run_auto(auto_prefs, log=lines.append, now=noticed) == 0
+      and auto_prefs["auto_enabled"] is True
+      and "stranger_since" in rw.load_state())
+check("nor on a second a few seconds later — a wake lines two ticks up",
+      rw.run_auto(auto_prefs, log=lines.append,
+                  now=noticed + timedelta(seconds=6)) == 0
+      and auto_prefs["auto_enabled"] is True)
+check("still there a tick later: the rotation switches off",
+      rw.run_auto(auto_prefs, log=lines.append,
+                  now=noticed + timedelta(minutes=1)) == 0
+      and auto_prefs["auto_enabled"] is False
+      and "stranger_since" not in rw.load_state())
+check("the ticks that noticed changed no wallpaper", len(applied) == before_count)
 check("the hand-set wallpaper is the one still on screen", fake_get() == unrelated)
 check("and every later tick keeps its hands off",
       rw.run_auto(auto_prefs, log=lines.append) == 0
@@ -376,6 +392,23 @@ check("an unreachable shell does not latch",
       rw.run_auto(auto_prefs, log=lines.append) == 0
       and auto_prefs["auto_enabled"] is True)
 rw.wallpaper_now = fake_get
+
+# A stranger that is gone by the next tick was a wrong answer, not a choice.
+real_screen = list(screen)
+screen[:] = [unrelated]
+rw.run_auto(auto_prefs, log=lines.append, now=noticed)
+screen[:] = real_screen
+rw.run_auto(auto_prefs, log=lines.append, now=noticed + timedelta(minutes=1))
+screen[:] = [unrelated]
+rw.run_auto(auto_prefs, log=lines.append, now=noticed + timedelta(minutes=2))
+check("a stranger seen once and then gone does not latch",
+      auto_prefs["auto_enabled"] is True)
+check("and a later one has to be confirmed afresh",
+      "stranger_since" in rw.load_state())
+screen[:] = real_screen
+rw.run_auto(auto_prefs, log=lines.append, now=noticed + timedelta(minutes=3))
+check("the false alarm is forgotten once ours is back",
+      "stranger_since" not in rw.load_state())
 
 # The hardlink every save makes into ~/Pictures/Wallpapers means one image
 # answers to two paths. Noctalia reporting the other one is not a stranger.
@@ -680,9 +713,11 @@ check("but the day is still recorded",
 
 # The latch outranks the nightly draw: a wallpaper set by hand stops it.
 screen[:] = [unrelated]
+hand_day = datetime.combine(last_day + timedelta(days=2), datetime.min.time())
+rw.run_auto(draw_prefs, log=lines.append, now=hand_day)
 check("a hand-set wallpaper stops the nightly draw too",
       rw.run_auto(draw_prefs, log=lines.append,
-                  today=last_day + timedelta(days=2)) == 0
+                  now=hand_day + timedelta(minutes=1)) == 0
       and len(applied) == before
       and draw_prefs["auto_enabled"] is False)
 
@@ -1007,6 +1042,21 @@ finally:
 
 check("the service skips quietly once the program is uninstalled",
       "ConditionPathExists=/opt/rw" in schedule.linux_units(["/opt/rw"])[0])
+
+# Right after a resume from sleep Noctalia does not answer yet, and asking the
+# next backend down read GNOME's default picture as a wallpaper set by hand.
+from randomwallpaper.desktop import linux  # noqa: E402
+
+real_backends = linux.BACKENDS
+linux.BACKENDS = [
+    ("shell", lambda: True, None, lambda: None),
+    ("gsettings", lambda: True, None, lambda: Path("/usr/share/adwaita.jxl")),
+]
+try:
+    check("a shell that does not answer is not asked past",
+          linux.wallpaper_now() is None)
+finally:
+    linux.BACKENDS = real_backends
 
 shutil.rmtree(FAKE, ignore_errors=True)
 print(f"\n{ok} passed, {fail} failed")
