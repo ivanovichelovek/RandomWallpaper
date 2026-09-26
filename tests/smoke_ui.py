@@ -50,6 +50,7 @@ def main():
         core.FetchError("smoke test: network disabled"))
     core.set_wallpaper = lambda path: None
     core.wallpaper_now = lambda: None
+    core.wallpapers_on_outputs = lambda: {}
 
     from PySide6.QtWidgets import QApplication
 

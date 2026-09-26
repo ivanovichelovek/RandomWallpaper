@@ -99,6 +99,12 @@ def wallpaper_now():
     return Path(out) if out else None
 
 
+
+def wallpapers_on_outputs():
+    """Per-output wallpapers are not read here: {} is "cannot tell apart"."""
+    return {}
+
+
 def describe():
     return "NSWorkspace" if _workspace() else "AppleScript (System Events)"
 

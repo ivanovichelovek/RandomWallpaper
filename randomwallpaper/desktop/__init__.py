@@ -28,6 +28,10 @@ def wallpaper_now():
     return _backend.wallpaper_now()
 
 
+def wallpapers_on_outputs():
+    return _backend.wallpapers_on_outputs()
+
+
 def pictures_dir():
     return _backend.pictures_dir()
 

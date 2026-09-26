@@ -727,7 +727,33 @@ def wallpaper_now():
         return None
 
 
-def wallpaper_was_changed_by_hand(state):
+def wallpapers_on_outputs():
+    """{output: wallpaper} where the platform keeps one per output and can
+    say so; {} otherwise, which leaves wallpaper_now's one answer standing."""
+    try:
+        return desktop.wallpapers_on_outputs()
+    except OSError:
+        return {}
+
+
+def outputs_behind(state, outputs):
+    """The outputs that came back with an old wallpaper.
+
+    A monitor unplugged while the wallpaper changed keeps the one it had, and
+    shows it again when it is plugged back in. An output the last tick did not
+    see is one of those, whatever it shows — nobody picked a wallpaper for a
+    monitor that was not there. So is one showing a file that is gone.
+    """
+    ours = state.get("path")
+    if not ours or not Path(ours).exists():
+        return []
+    seen = set(state.get("outputs", []))
+    return sorted(name for name, path in outputs.items()
+                  if not same_file(path, ours)
+                  and (name not in seen or not Path(path).exists()))
+
+
+def wallpaper_was_changed_by_hand(state, outputs=None):
     """Is what is on screen something other than the file the rotation put
     there?
 
@@ -745,6 +771,15 @@ def wallpaper_was_changed_by_hand(state):
         # reading it as one would switch the rotation off for the ordinary act
         # of tidying up. run_auto notices the gap separately and draws again.
         return False
+    # One output that was there last tick and now shows something else is
+    # as much a choice as the whole desktop changing; a monitor just plugged
+    # in is not (outputs_behind).
+    if outputs is None:
+        outputs = wallpapers_on_outputs()
+    behind = outputs_behind(state, outputs)
+    if any(name not in behind and not same_file(path, ours)
+           for name, path in outputs.items()):
+        return True
     current = wallpaper_now()
     if current is None:
         return False          # unknown, and unknown is never grounds to latch
@@ -979,8 +1014,10 @@ def run_auto(prefs, force=False, log=print, today=None, now=None, quiet=False):
     # the rotation off for good. So the first sighting is only noted, nothing
     # is changed on screen, and it takes a stranger still there a tick later
     # to latch.
+    outputs = {}
     if prefs["auto_enabled"] and not force:
-        if wallpaper_was_changed_by_hand(state):
+        outputs = wallpapers_on_outputs()
+        if wallpaper_was_changed_by_hand(state, outputs):
             try:
                 since = now - datetime.fromisoformat(state["stranger_since"])
             except (KeyError, TypeError, ValueError):
@@ -1002,6 +1039,24 @@ def run_auto(prefs, force=False, log=print, today=None, now=None, quiet=False):
             return 0
         if state.pop("stranger_since", None) is not None:
             save_state(state)       # a false alarm, or no answer: start over
+
+        behind = outputs_behind(state, outputs)
+        if behind:
+            # Put without a connector, it reaches every output there now.
+            try:
+                set_wallpaper(state["path"])
+                log(f"{', '.join(behind)}: caught up with {Path(state['path']).name}")
+                behind = []
+            except (subprocess.SubprocessError, OSError) as exc:
+                log(f"could not bring {', '.join(behind)} up to date: {exc}")
+        # Remembered only from a real answer: an empty one right after a wake
+        # would make every output look newly plugged in on the next tick. And
+        # not an output still behind: remembered, its old wallpaper would read
+        # as one set by hand, when the next tick should just try again.
+        seen = sorted(name for name in outputs if name not in behind)
+        if seen and state.get("outputs") != seen:
+            state["outputs"] = seen
+            save_state(state)
 
     if not prefs["auto_enabled"] and not force:
         note(f"automatic rotation is off (today is {period})")
@@ -1072,6 +1127,9 @@ def run_auto(prefs, force=False, log=print, today=None, now=None, quiet=False):
         "theme": theme,
         "path": str(path),
         "applied_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        # Kept across the apply: a monitor that was already there is not
+        # "just plugged in" because the wallpaper changed.
+        **({"outputs": state["outputs"]} if state.get("outputs") else {}),
     })
     log(f"{period}: {theme_label(theme)} — {path}")
     return 0

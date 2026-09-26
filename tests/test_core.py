@@ -313,6 +313,10 @@ def fake_get():
 
 
 rw.set_wallpaper, rw.wallpaper_now = fake_set, fake_get
+# Per output, the fake shell has nothing to say unless a test gives it
+# monitors — or the real Noctalia on a developer's machine would answer.
+monitors = {}
+rw.wallpapers_on_outputs = lambda: dict(monitors)
 
 auto_prefs = dict(rw.DEFAULTS, theme="all")
 theme_now, period_now = rw.current_period(date.today(), auto_prefs["easter"])
@@ -409,6 +413,49 @@ screen[:] = real_screen
 rw.run_auto(auto_prefs, log=lines.append, now=noticed + timedelta(minutes=3))
 check("the false alarm is forgotten once ours is back",
       "stranger_since" not in rw.load_state())
+
+# A second monitor. Noctalia keeps a wallpaper per output, and one unplugged
+# while the wallpaper changed comes back with the old one.
+ours_now = Path(rw.load_state()["path"])
+old_one = rw.AUTO_DIR / "an-earlier-one.jpg"; old_one.write_bytes(b"old")
+monitors.update({"eDP-1": ours_now})
+rw.run_auto(auto_prefs, log=lines.append, now=noticed + timedelta(minutes=4))
+check("the outputs there are remembered", rw.load_state()["outputs"] == ["eDP-1"])
+
+caught = []
+real_fake_set = rw.set_wallpaper
+monitors["DP-1"] = old_one            # plugged back in, with what it had
+
+
+def shell_not_ready(path):
+    raise OSError("noctalia is not running")
+
+
+rw.set_wallpaper = shell_not_ready    # …right as the shell wakes up
+rw.run_auto(auto_prefs, log=lines.append, now=noticed + timedelta(minutes=4, seconds=10))
+rw.run_auto(auto_prefs, log=lines.append, now=noticed + timedelta(minutes=4, seconds=40))
+check("a catch-up that fails is retried, not read as a hand-set wallpaper",
+      auto_prefs["auto_enabled"] is True
+      and rw.load_state()["outputs"] == ["eDP-1"])
+rw.set_wallpaper = lambda path: (caught.append(Path(path)),
+                                 monitors.update({k: Path(path) for k in monitors}))
+rw.run_auto(auto_prefs, log=lines.append, now=noticed + timedelta(minutes=5))
+check("a monitor plugged back in with an old wallpaper is caught up",
+      caught == [ours_now] and monitors["DP-1"] == ours_now)
+check("and that is not read as a wallpaper set by hand",
+      auto_prefs["auto_enabled"] is True and "stranger_since" not in rw.load_state())
+check("and it is remembered from then on",
+      rw.load_state()["outputs"] == ["DP-1", "eDP-1"])
+
+monitors["DP-1"] = unrelated           # now picked by hand, on that one only
+rw.run_auto(auto_prefs, log=lines.append, now=noticed + timedelta(minutes=6))
+rw.run_auto(auto_prefs, log=lines.append, now=noticed + timedelta(minutes=7))
+check("a wallpaper picked for one monitor is a hand-set one too",
+      auto_prefs["auto_enabled"] is False and len(caught) == 1)
+rw.set_wallpaper = real_fake_set
+monitors.clear()
+rw.set_auto_enabled(auto_prefs, True)
+old_one.unlink()
 
 # The hardlink every save makes into ~/Pictures/Wallpapers means one image
 # answers to two paths. Noctalia reporting the other one is not a stranger.

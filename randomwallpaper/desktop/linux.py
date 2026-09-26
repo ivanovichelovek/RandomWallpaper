@@ -44,6 +44,27 @@ def _noctalia_get():
     return Path(out) if out else None
 
 
+def _noctalia_outputs():
+    # Noctalia has no command that lists outputs, but its refusal of a name
+    # it does not know lists every one it does: 'unknown output "x"; known:
+    # eDP-1, DP-1'. No such line — a different version — is simply no answer.
+    probe = run(["noctalia", "msg", "wallpaper-get", "random-wallpaper-probe"],
+                check=False)
+    match = re.search(r"known:\s*(.+)", probe.stderr + probe.stdout)
+    if not match:
+        return {}
+    found = {}
+    for name in re.split(r"[,\s]+", match.group(1).strip().strip(".")):
+        name = name.strip("'\"")
+        if not name:
+            continue
+        done = run(["noctalia", "msg", "wallpaper-get", name], check=False)
+        out = done.stdout.strip()
+        if done.returncode == 0 and out:
+            found[name] = Path(out)
+    return found
+
+
 def _swww_set(path):
     run(["swww", "img", str(path)])
 
@@ -166,6 +187,13 @@ BACKENDS = [
 ]
 
 
+# The backends that can say what each output shows, where that can differ
+# from the one answer wallpaper_now gives: Noctalia keeps a wallpaper per
+# connector, and one that was unplugged when the wallpaper changed comes back
+# with the one it had.
+OUTPUT_GETTERS = {"noctalia": _noctalia_outputs}
+
+
 def available():
     """The backends this session could use, best first."""
     found = []
@@ -227,6 +255,19 @@ def wallpaper_now():
         return getter() or None
     except OSError:
         return None
+
+
+def wallpapers_on_outputs():
+    """{connector: wallpaper} for each connected output, from the backend
+    wallpaper_now asks; {} when it cannot tell them apart or cannot say."""
+    found = available()
+    getter = OUTPUT_GETTERS.get(found[0][0]) if found else None
+    if getter is None:
+        return {}
+    try:
+        return getter()
+    except OSError:
+        return {}
 
 
 def pictures_dir():
