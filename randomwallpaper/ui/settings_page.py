@@ -136,7 +136,7 @@ class SettingsPage(QWidget):
         # ── the calendar rotation ────────────────────────────────────────
         auto_card, auto = _card()
         root_layout.addWidget(auto_card)
-        auto.addWidget(_eyebrow("FOLLOW THE CALENDAR"))
+        auto.addWidget(_eyebrow("ROTATION"))
         self._bad_times = None
 
         # Short, with the explanation in a label of its own: QCheckBox has no
@@ -148,11 +148,25 @@ class SettingsPage(QWidget):
         self._suppress_auto = False
         self.auto.toggled.connect(self.apply)
         auto.addWidget(self.auto)
-        auto_about = QLabel("With the season or the holiday, and inside each "
-                            "one as often as set below.")
-        auto_about.setWordWrap(True)
-        auto_about.setStyleSheet("color:#8B90A8; font-size:12px;")
-        auto.addWidget(auto_about)
+        # What it draws from: the calendar, or the ★ set from the
+        # Downloaded tab regardless of the date.
+        drawn = QHBoxLayout()
+        auto.addLayout(drawn)
+        self.rotation_group = QButtonGroup(self)
+        self.rotation_buttons = {}
+        for label, key in core.ROTATIONS:
+            button = QRadioButton(label)
+            button.setChecked(core.rotation(prefs) == key)
+            self.rotation_group.addButton(button)
+            self.rotation_buttons[key] = button
+            drawn.addWidget(button)
+        drawn.addStretch(1)
+        self.rotation_group.buttonToggled.connect(self._rotation_toggled)
+
+        self.auto_about = QLabel()
+        self.auto_about.setWordWrap(True)
+        self.auto_about.setStyleSheet("color:#8B90A8; font-size:12px;")
+        auto.addWidget(self.auto_about)
 
         self.auto_status = QLabel()
         self.auto_status.setWordWrap(True)
@@ -216,8 +230,10 @@ class SettingsPage(QWidget):
         self.timer_status.hide()
         self.timer_button.hide()
 
-        rite = QHBoxLayout()
-        auto.addLayout(rite)
+        self.rite_row = QWidget()
+        rite = QHBoxLayout(self.rite_row)
+        rite.setContentsMargins(0, 0, 0, 0)
+        auto.addWidget(self.rite_row)
         rite.addWidget(_eyebrow("EASTER"))
         self.easter_group = QButtonGroup(self)
         self.easter_orthodox = QRadioButton("Orthodox")
@@ -230,6 +246,42 @@ class SettingsPage(QWidget):
         rite.addWidget(self.easter_orthodox)
         rite.addWidget(self.easter_western)
         rite.addStretch(1)
+
+        # ── several monitors ─────────────────────────────────────────────
+        screens_card, screens = _card()
+        root_layout.addWidget(screens_card)
+        screens.addWidget(_eyebrow("SCREENS"))
+        modes = QHBoxLayout()
+        screens.addLayout(modes)
+        self.screens_group = QButtonGroup(self)
+        self.screens_buttons = {}
+        for label, key in core.SCREEN_MODES:
+            button = QRadioButton(label)
+            button.setChecked(core.screens_mode(prefs) == key)
+            self.screens_group.addButton(button)
+            self.screens_buttons[key] = button
+            modes.addWidget(button)
+        modes.addStretch(1)
+        self.screens_group.buttonToggled.connect(self._screens_toggled)
+
+        self.main_row = QWidget()
+        main = QHBoxLayout(self.main_row)
+        main.setContentsMargins(0, 0, 0, 0)
+        main.addWidget(_eyebrow("MAIN SCREEN"))
+        self.main_output = self._combo([])
+        self.main_output.currentIndexChanged.connect(self.apply)
+        main.addWidget(self.main_output, 1)
+        screens.addWidget(self.main_row)
+        self.fill_outputs()
+
+        self.screens_about = QLabel()
+        self.screens_about.setWordWrap(True)
+        self.screens_about.setStyleSheet("color:#8B90A8; font-size:12px;")
+        screens.addWidget(self.screens_about)
+        if not core.can_set_per_output():
+            # Nothing here can tell one monitor's wallpaper from another's.
+            for w in (*self.screens_buttons.values(), self.main_output):
+                w.setEnabled(False)
 
         # ── the app itself ───────────────────────────────────────────────
         app_card, app = _card()
@@ -294,6 +346,75 @@ class SettingsPage(QWidget):
             hours = not hours       # the value still counts in the old unit
         return self.every.value() * 60 if hours else self.every.value()
 
+    def _rotation(self):
+        for key, button in self.rotation_buttons.items():
+            if button.isChecked():
+                return key
+        return "calendar"
+
+    def _rotation_toggled(self, button, checked):
+        if not checked:
+            return          # the other half of the same switch
+        if (button is self.rotation_buttons[core.SHUFFLE]
+                and self.prefs["change_mode"] == "midnight"):
+            # Shuffling is for a wallpaper that changes through the day, so
+            # it starts at once an hour. Through the widgets, which apply()
+            # reads the prefs back from; the Change row can still say
+            # otherwise afterwards.
+            for w in (self.change_mode, self.every, self.every_unit):
+                w.blockSignals(True)
+            self.change_mode.setCurrentIndex(self._pos(core.CHANGE_MODES, "every"))
+            self.every_unit.setCurrentIndex(1)
+            self._set_every_range()
+            self.every.setValue(1)
+            for w in (self.change_mode, self.every, self.every_unit):
+                w.blockSignals(False)
+        self.apply()
+
+    def _screens(self):
+        for key, button in self.screens_buttons.items():
+            if button.isChecked():
+                return key
+        return "sync"
+
+    def fill_outputs(self):
+        """The main-screen choices: automatic, then each monitor there now —
+        and the one chosen before, even unplugged, so it is not lost."""
+        names = list(core.wallpapers_on_outputs())
+        chosen = self.prefs.get("primary_output") or ""
+        if chosen and chosen not in names:
+            names.append(chosen)
+        auto = core.primary_output(dict(self.prefs, primary_output=""),
+                                   core.wallpapers_on_outputs())
+        self.main_output.blockSignals(True)
+        self.main_output.clear()
+        self.main_output.addItem(f"Automatic — {auto}" if auto else "Automatic", "")
+        for name in names:
+            self.main_output.addItem(name, name)
+        self.main_output.setCurrentIndex(max(0, self.main_output.findData(chosen)))
+        self.main_output.blockSignals(False)
+
+    def _screens_toggled(self, button, checked):
+        if not checked:
+            return          # the other half of the same switch
+        self.apply()
+        # A new arrangement is due now, not at the next slot. With the
+        # rotation on, a forced tick draws it — and gets past the latch, which
+        # would otherwise read the switch itself as a hand-set wallpaper.
+        # With it off, the same everywhere means copying the main one across.
+        if self.prefs["auto_enabled"]:
+            self.retick(force=True)
+        elif self.prefs["screens"] == "sync":
+            prefs, win = dict(self.prefs), self.win
+
+            def work():
+                lines = []
+                core.match_main_output(prefs, log=lines.append)
+                if lines:
+                    win.post_to_ui(lambda: win.show_toast(lines[-1]))
+
+            threading.Thread(target=work, daemon=True).start()
+
     def _show_change_widgets(self):
         mode = core.CHANGE_MODES[self.change_mode.currentIndex()][1]
         self.every.setVisible(mode == "every")
@@ -332,18 +453,55 @@ class SettingsPage(QWidget):
                      f"all, so those frames come from {other}.")
         self.source_hint.setText(hint)
 
-        theme_now, period = core.current_period(date.today(), self.prefs["easter"])
+        shuffling = core.rotation(self.prefs) == core.SHUFFLE
+        self.rite_row.setVisible(not shuffling)
+        how = core.describe_change(self.prefs)
         state = core.load_state()
-        if not self.prefs["auto_enabled"]:
-            status = f"off — today would be {core.theme_label(theme_now)}"
-        elif state.get("period") == period:
-            status = f"{period} applied {state.get('applied_at', '?')}"
+        if shuffling:
+            picks = len(core.pool_images(core.SHUFFLE))
+            self.auto_about.setText(
+                f"A random one of the wallpapers marked ★ on the Downloaded "
+                f"tab, {how}, whatever the date.")
+            if not picks:
+                status = ("nothing marked ★ yet — select some on the "
+                          "Downloaded tab and press ★ Shuffle")
+            elif not self.prefs["auto_enabled"]:
+                status = f"off — {picks} marked ★"
+            elif state.get("period") == core.SHUFFLE:
+                status = f"{picks} marked ★ · changed {state.get('applied_at', '?')}"
+            else:
+                status = f"{picks} marked ★ · not applied yet"
         else:
-            status = f"{period} — {core.theme_label(theme_now)}, not applied yet"
+            self.auto_about.setText("With the season or the holiday, and "
+                                    "inside each one as often as set below.")
+            theme_now, period = core.current_period(date.today(), self.prefs["easter"])
+            if not self.prefs["auto_enabled"]:
+                status = f"off — today would be {core.theme_label(theme_now)}"
+            elif state.get("period") == period:
+                status = f"{period} applied {state.get('applied_at', '?')}"
+            else:
+                status = f"{period} — {core.theme_label(theme_now)}, not applied yet"
         self.auto_status.setText(status)
 
-        how = core.describe_change(self.prefs)
-        if self.prefs["change_mode"] == "midnight":
+        if not core.can_set_per_output():
+            about = ("This desktop keeps one wallpaper for every screen, so "
+                     "they are always the same.")
+        elif core.screens_mode(self.prefs) == "separate":
+            about = ("Every screen keeps its own: the rotation draws a "
+                     "different one for each, Set as wallpaper asks which, and "
+                     "a monitor plugged in keeps the one it had.")
+        else:
+            about = ("A monitor plugged in takes the main screen's wallpaper "
+                     "within a minute, rotation on or off.")
+        self.main_row.setVisible(core.screens_mode(self.prefs) == "sync")
+        self.screens_about.setText(about)
+
+        if shuffling:
+            self.change_hint.setText(
+                "One marked ★ stays up; with several, they take turns at "
+                "random, never the same one twice in a row. Nothing is "
+                "downloaded.")
+        elif self.prefs["change_mode"] == "midnight":
             self.change_hint.setText(
                 "A new wallpaper each midnight, drawn from what is pinned to "
                 "the season or holiday. With nothing pinned, one download "
@@ -398,6 +556,7 @@ class SettingsPage(QWidget):
             return
         was_on = self.prefs["auto_enabled"]
         mode_before = self.prefs["change_mode"]
+        rotation_before = core.rotation(self.prefs)
         # A time list that does not parse is shown as an error and not saved:
         # the rotation keeps the last one that did.
         times = self.prefs["change_times"]
@@ -420,6 +579,9 @@ class SettingsPage(QWidget):
             "change_mode": core.CHANGE_MODES[self.change_mode.currentIndex()][1],
             "change_every": self._every_minutes(),
             "change_times": times,
+            "rotation": self._rotation(),
+            "screens": self._screens(),
+            "primary_output": self.main_output.currentData() or "",
         })
         core.save_prefs(self.prefs)
         self._show_change_widgets()
@@ -433,6 +595,10 @@ class SettingsPage(QWidget):
         # tick — otherwise the switch appears to do nothing for up to an hour.
         if self.auto.isChecked() and not was_on:
             self.resume()
+        elif self.auto.isChecked() and self.prefs["rotation"] != rotation_before:
+            # A different thing to draw from is a different wallpaper due now,
+            # not at the next tick of a timer that may not be running.
+            self.retick()
 
     def resume(self):
         prefs = dict(self.prefs)
@@ -457,6 +623,19 @@ class SettingsPage(QWidget):
                 said = f"{problem} · {said}" if said else problem
             win.post_to_ui(lambda: win.show_toast(said))
             win.post_to_ui(self.check_timer)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def retick(self, force=False):
+        prefs = dict(self.prefs)
+        win = self.win
+
+        def work():
+            lines = []
+            core.run_auto(prefs, log=lines.append, quiet=True, force=force)
+            if lines:
+                win.post_to_ui(lambda: win.show_toast(lines[-1]))
+            win.post_to_ui(self.refresh_hint)
 
         threading.Thread(target=work, daemon=True).start()
 

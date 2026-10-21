@@ -39,6 +39,10 @@ def _noctalia_set(path):
     run(["noctalia", "msg", "wallpaper-set", str(path)])
 
 
+def _noctalia_set_on(output, path):
+    run(["noctalia", "msg", "wallpaper-set", output, str(path)])
+
+
 def _noctalia_get():
     out = run(["noctalia", "msg", "wallpaper-get"], check=False).stdout.strip()
     return Path(out) if out else None
@@ -192,6 +196,8 @@ BACKENDS = [
 # connector, and one that was unplugged when the wallpaper changed comes back
 # with the one it had.
 OUTPUT_GETTERS = {"noctalia": _noctalia_outputs}
+# And the ones that can be told to change one output only, leaving the rest.
+OUTPUT_SETTERS = {"noctalia": _noctalia_set_on}
 
 
 def available():
@@ -268,6 +274,23 @@ def wallpapers_on_outputs():
         return getter()
     except OSError:
         return {}
+
+
+def can_set_per_output(command=None):
+    """Whether set_wallpaper_on can work here: only where the backend
+    set_wallpaper writes to keeps one wallpaper per output. A user's own
+    command takes one path and nothing else, so it cannot."""
+    if command:
+        return False
+    found = available()
+    return bool(found) and found[0][0] in OUTPUT_SETTERS
+
+
+def set_wallpaper_on(output, path, command=None):
+    """The wallpaper on one output, the others left as they are."""
+    if not can_set_per_output(command):
+        raise WallpaperError("this desktop cannot set a wallpaper per monitor")
+    OUTPUT_SETTERS[available()[0][0]](output, path)
 
 
 def pictures_dir():

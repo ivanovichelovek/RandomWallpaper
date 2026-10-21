@@ -50,7 +50,9 @@ def main():
         core.FetchError("smoke test: network disabled"))
     core.set_wallpaper = lambda path: None
     core.wallpaper_now = lambda: None
-    core.wallpapers_on_outputs = lambda: {}
+    core.wallpapers_on_outputs = lambda: {"eDP-1": Path("/x.jpg"), "DP-1": Path("/y.jpg")}
+    core.set_wallpaper_on = lambda output, path: None
+    core.can_set_per_output = lambda: True
 
     from PySide6.QtWidgets import QApplication
 
@@ -88,6 +90,23 @@ def main():
     while not hit and time.time() < deadline:
         app.processEvents()
     check("post_to_ui runs on the UI thread", hit == [True])
+
+    # Each screen its own: Set as wallpaper becomes a choice of screen.
+    win.settings.fill_outputs()
+    check("the main-screen choice lists the monitors",
+          [win.settings.main_output.itemData(i)
+           for i in range(win.settings.main_output.count())] == ["", "eDP-1", "DP-1"])
+    win.settings.screens_buttons["separate"].setChecked(True)
+    app.processEvents()
+    check("the choice is saved", core.load_prefs()["screens"] == "separate")
+    win.show_tab(1)
+    win.library.sync()
+    check("Set as wallpaper asks which screen",
+          win.library.set_btn.menu() is win.library.screen_menu)
+    win.library.refresh_screen_menu()
+    check("one entry per screen, and every screen",
+          [a.text() for a in win.library.screen_menu.actions() if a.text()][-1]
+          == "Every screen")
 
     win.close()
     check("window closes without raising", True)

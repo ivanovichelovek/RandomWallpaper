@@ -24,6 +24,20 @@ def set_wallpaper(path, command=None):
     _backend.set_wallpaper(path, command=custom_command(command))
 
 
+def can_set_per_output():
+    check = getattr(_backend, "can_set_per_output", None)
+    return bool(check and check(command=custom_command(None)))
+
+
+def set_wallpaper_on(output, path):
+    """One output only. Raises WallpaperError where the platform has no such
+    thing — check can_set_per_output first."""
+    setter = getattr(_backend, "set_wallpaper_on", None)
+    if setter is None:
+        raise WallpaperError("this desktop cannot set a wallpaper per monitor")
+    setter(output, path, command=custom_command(None))
+
+
 def wallpaper_now():
     return _backend.wallpaper_now()
 

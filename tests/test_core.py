@@ -317,6 +317,25 @@ rw.set_wallpaper, rw.wallpaper_now = fake_set, fake_get
 # monitors — or the real Noctalia on a developer's machine would answer.
 monitors = {}
 rw.wallpapers_on_outputs = lambda: dict(monitors)
+# And one output at a time, kept fake for the whole run: a monitor plugged in
+# is caught up through it on every tick, rotation on or off, and the real one
+# would reach the developer's own desktop. The desktop layer's own is
+# disarmed as well, for anything that slips past the fake.
+per_output = []
+
+
+def fake_set_on(output, path):
+    per_output.append((output, Path(path)))
+    monitors[output] = Path(path)
+
+
+def refuse_per_output(*_args, **_kwargs):
+    raise AssertionError("a test reached the real desktop")
+
+
+rw.set_wallpaper_on = fake_set_on
+rw.can_set_per_output = lambda: True
+rw.desktop.set_wallpaper_on = refuse_per_output
 
 auto_prefs = dict(rw.DEFAULTS, theme="all")
 theme_now, period_now = rw.current_period(date.today(), auto_prefs["easter"])
@@ -432,6 +451,7 @@ def shell_not_ready(path):
 
 
 rw.set_wallpaper = shell_not_ready    # …right as the shell wakes up
+rw.set_wallpaper_on = lambda output, path: shell_not_ready(path)
 rw.run_auto(auto_prefs, log=lines.append, now=noticed + timedelta(minutes=4, seconds=10))
 rw.run_auto(auto_prefs, log=lines.append, now=noticed + timedelta(minutes=4, seconds=40))
 check("a catch-up that fails is retried, not read as a hand-set wallpaper",
@@ -439,9 +459,12 @@ check("a catch-up that fails is retried, not read as a hand-set wallpaper",
       and rw.load_state()["outputs"] == ["eDP-1"])
 rw.set_wallpaper = lambda path: (caught.append(Path(path)),
                                  monitors.update({k: Path(path) for k in monitors}))
+rw.set_wallpaper_on = fake_set_on
+per_output.clear()
 rw.run_auto(auto_prefs, log=lines.append, now=noticed + timedelta(minutes=5))
 check("a monitor plugged back in with an old wallpaper is caught up",
-      caught == [ours_now] and monitors["DP-1"] == ours_now)
+      per_output == [("DP-1", ours_now)] and monitors["DP-1"] == ours_now)
+check("by itself, the main one left alone", caught == [])
 check("and that is not read as a wallpaper set by hand",
       auto_prefs["auto_enabled"] is True and "stranger_since" not in rw.load_state())
 check("and it is remembered from then on",
@@ -451,7 +474,8 @@ monitors["DP-1"] = unrelated           # now picked by hand, on that one only
 rw.run_auto(auto_prefs, log=lines.append, now=noticed + timedelta(minutes=6))
 rw.run_auto(auto_prefs, log=lines.append, now=noticed + timedelta(minutes=7))
 check("a wallpaper picked for one monitor is a hand-set one too",
-      auto_prefs["auto_enabled"] is False and len(caught) == 1)
+      auto_prefs["auto_enabled"] is False and caught == []
+      and len(per_output) == 1)
 rw.set_wallpaper = real_fake_set
 monitors.clear()
 rw.set_auto_enabled(auto_prefs, True)
@@ -767,6 +791,69 @@ check("a hand-set wallpaper stops the nightly draw too",
                   now=hand_day + timedelta(minutes=1)) == 0
       and len(applied) == before
       and draw_prefs["auto_enabled"] is False)
+
+# ── shuffling your own picks ────────────────────────────────────────────────
+# The shuffle set is drawn from whatever the date, and never downloads: with
+# nothing in it the tick does nothing rather than fetch "everything".
+check("shuffle is a pin category but not a theme",
+      rw.SHUFFLE in rw.pin_categories()
+      and rw.SHUFFLE not in {t[0] for t in rw.THEMES}
+      and rw.theme_label(rw.SHUFFLE) == "Shuffle")
+check("an unknown rotation reads as the calendar",
+      rw.rotation({"rotation": "later-version"}) == "calendar")
+
+real_download = rw.download
+
+
+def no_download(_prefs):
+    raise AssertionError("shuffle must not download")
+
+
+rw.download = no_download
+shuffle_prefs = dict(rw.DEFAULTS, auto_enabled=True, rotation="shuffle",
+                     change_mode="every", change_every=60)
+spool = rw.theme_pool(rw.SHUFFLE); spool.mkdir(parents=True, exist_ok=True)
+rw.STATE_FILE.unlink(missing_ok=True)
+applied.clear(); screen.clear()
+at = datetime(2026, 7, 1, 10, 5)
+check("an empty shuffle set does nothing and downloads nothing",
+      rw.run_auto(shuffle_prefs, log=lines.append, now=at) == 0 and not applied)
+
+picks = []
+for n in range(3):
+    f = spool / f"pick-{n}.png"; f.write_bytes(bytes([10 + n]))
+    picks.append(f)
+check("with picks, the first tick applies one of them",
+      rw.run_auto(shuffle_prefs, log=lines.append, now=at) == 0
+      and len(applied) == 1 and applied[-1] in picks)
+check("the period recorded is the shuffle set",
+      rw.load_state()["period"] == rw.SHUFFLE)
+check("the same hour does nothing more",
+      rw.run_auto(shuffle_prefs, log=lines.append,
+                  now=at + timedelta(minutes=30)) == 0 and len(applied) == 1)
+repeats, previous = 0, applied[-1]
+for h in range(1, 12):
+    rw.run_auto(shuffle_prefs, log=lines.append, now=at + timedelta(hours=h))
+    repeats += applied[-1] == previous
+    previous = applied[-1]
+check("each hour brings another pick", len(applied) == 12 and repeats == 0)
+check("only ever from the set", set(applied) <= set(picks))
+
+before = len(applied)
+cal_prefs = dict(shuffle_prefs, rotation="calendar")
+cal_theme, cal_period = rw.current_period(at.date(), "orthodox")
+for f in rw.theme_pool(cal_theme).glob("*"):
+    f.unlink()
+cal_file = rw.AUTO_DIR / f"{cal_period}_{rw.current_slot(cal_prefs, at + timedelta(hours=11)).replace(':', '')}.jpg"
+cal_file.write_bytes(b"calendar")
+check("switching back to the calendar applies at once",
+      rw.run_auto(cal_prefs, log=lines.append, now=at + timedelta(hours=11)) == 0
+      and len(applied) == before + 1 and applied[-1] == cal_file)
+check("and switching to shuffle again does too",
+      rw.run_auto(shuffle_prefs, log=lines.append,
+                  now=at + timedelta(hours=11)) == 0
+      and len(applied) == before + 2 and applied[-1] in picks)
+rw.download = real_download
 
 # ── the timer, per platform ─────────────────────────────────────────────────
 # The macOS and Windows schedulers can only be registered on their own OS, but
@@ -1089,6 +1176,114 @@ finally:
 
 check("the service skips quietly once the program is uninstalled",
       "ConditionPathExists=/opt/rw" in schedule.linux_units(["/opt/rw"])[0])
+
+# ── several monitors: the same everywhere, or each its own ─────────────────
+# Through the fake shell: wallpapers_on_outputs reads `monitors`, and
+# set_wallpaper_on writes to it.
+rw.set_wallpaper, rw.wallpaper_now = fake_set, fake_get
+rw.download = no_download
+rw.STATE_FILE.unlink(missing_ok=True)
+lines = []
+screens_prefs = dict(rw.DEFAULTS, theme="all", auto_enabled=False)
+main_one = rw.SAVE_DIR / "main-one.jpg"; main_one.write_bytes(b"main")
+stale = rw.SAVE_DIR / "stale-one.jpg"; stale.write_bytes(b"stale")
+monitors.clear()
+monitors.update({"eDP-1": main_one})
+per_output.clear()
+rw.run_auto(screens_prefs, log=lines.append, quiet=True)
+check("with the rotation off, the outputs are still remembered",
+      rw.load_state().get("outputs") == ["eDP-1"])
+monitors["DP-1"] = stale                    # plugged in, with what it had
+rw.run_auto(screens_prefs, log=lines.append, quiet=True)
+check("a monitor plugged in takes the main one's wallpaper, rotation off",
+      per_output == [("DP-1", main_one)] and monitors["DP-1"] == main_one)
+check("and is remembered from then on",
+      rw.load_state()["outputs"] == ["DP-1", "eDP-1"])
+check("the rotation stays off", screens_prefs["auto_enabled"] is False)
+
+monitors["DP-1"] = stale                    # picked by hand, for that one
+per_output.clear()
+rw.run_auto(screens_prefs, log=lines.append, quiet=True)
+check("a monitor that was already there keeps what it was given",
+      per_output == [] and monitors["DP-1"] == stale)
+
+del monitors["DP-1"]
+rw.run_auto(screens_prefs, log=lines.append, quiet=True)
+monitors.clear()
+monitors.update({"DP-1": stale, "eDP-1": main_one})   # listed first, even so
+rw.run_auto(screens_prefs, log=lines.append, quiet=True)
+check("the built-in panel is the main one, whatever the order",
+      per_output == [("DP-1", main_one)])
+
+check("the main one can be named instead",
+      rw.primary_output(dict(screens_prefs, primary_output="DP-1"),
+                        {"eDP-1": main_one, "DP-1": stale}) == "DP-1")
+check("one named but not there falls back to the panel",
+      rw.primary_output(dict(screens_prefs, primary_output="HDMI-A-1"),
+                        {"DP-1": stale, "eDP-1": main_one}) == "eDP-1")
+
+rw.STATE_FILE.unlink(missing_ok=True)
+monitors.clear()
+monitors.update({"eDP-1": main_one, "DP-1": stale})
+per_output.clear()
+rw.run_auto(screens_prefs, log=lines.append, quiet=True)
+check("with no tick before, nothing counts as just plugged in", per_output == [])
+
+# Each its own: a newly plugged monitor keeps what it had, and the rotation
+# draws a different one for every output.
+separate = dict(screens_prefs, screens="separate", primary_output="")
+del monitors["DP-1"]
+rw.run_auto(separate, log=lines.append, quiet=True)
+monitors["DP-1"] = stale
+rw.run_auto(separate, log=lines.append, quiet=True)
+check("each its own: a monitor plugged in keeps its wallpaper",
+      per_output == [] and monitors["DP-1"] == stale)
+check("but it is remembered all the same",
+      rw.load_state()["outputs"] == ["DP-1", "eDP-1"])
+
+pool = rw.theme_pool("summer"); pool.mkdir(parents=True, exist_ok=True)
+picks = []
+for i in range(3):
+    f = pool / f"summer-pick-{i}.jpg"; f.write_bytes(b"pick%d" % i); picks.append(f)
+separate.update(auto_enabled=True, theme="summer")
+real_period = rw.current_period
+rw.current_period = lambda today, rite: ("summer", "summer-2026")
+try:
+    rw.run_auto(separate, log=lines.append, force=True)
+    state = rw.load_state()
+    check("each output gets its own draw",
+          sorted(n for n, _ in per_output) == ["DP-1", "eDP-1"]
+          and per_output[0][1] != per_output[1][1])
+    check("and the state records which went where",
+          state.get("paths") == {n: str(f) for n, f in per_output})
+    check("the main one's is the one the state calls ours",
+          state["path"] == state["paths"]["eDP-1"])
+    rw.run_auto(separate, log=lines.append, quiet=True)
+    check("two different wallpapers are not read as a hand-set one",
+          separate["auto_enabled"] is True and "stranger_since" not in rw.load_state())
+    monitors["HDMI-A-1"] = stale            # a third one, never drawn for
+    rw.run_auto(separate, log=lines.append, quiet=True)
+    rw.run_auto(separate, log=lines.append, quiet=True)
+    check("a monitor the rotation never drew for does not latch it",
+          separate["auto_enabled"] is True)
+    del monitors["HDMI-A-1"]
+    monitors["DP-1"] = stale                # set by hand, on one of them
+    soon = datetime.now() + timedelta(minutes=10)
+    rw.run_auto(separate, log=lines.append, quiet=True)
+    rw.run_auto(separate, log=lines.append, quiet=True, now=soon)
+    check("one output changed by hand switches the rotation off",
+          separate["auto_enabled"] is False)
+finally:
+    rw.current_period = real_period
+    shutil.rmtree(pool, ignore_errors=True)
+
+check("each its own needs a desktop that can do it",
+      rw.screens_mode({"screens": "separate"}) == "separate")
+rw.can_set_per_output = lambda: False
+check("and falls back to the same everywhere without one",
+      rw.screens_mode({"screens": "separate"}) == "sync")
+rw.can_set_per_output = lambda: True
+monitors.clear()
 
 # Right after a resume from sleep Noctalia does not answer yet, and asking the
 # next backend down read GNOME's default picture as a wallpaper set by hand.

@@ -45,6 +45,8 @@ CATEGORY_COLORS = {
     "christmas": "#E86A6A",
     "valentine": "#F08CC0",
     "easter": "#C8E07A",
+    # The accent: the shuffle set is the one category the tiles outline.
+    "shuffle": "#F2D98C",
 }
 
 MONO_FONT = '"JetBrains Mono", "Consolas", "DejaVu Sans Mono", monospace'
@@ -160,6 +162,7 @@ QPushButton {{
 }}
 QPushButton:hover {{ background: {BG_BTN_HOVER}; border-color: {BORDER_HOVER}; }}
 QPushButton:pressed {{ background: {BG_BAR}; }}
+QPushButton:checked {{ color: {ACCENT}; border-color: {ACCENT}; }}
 QPushButton:disabled {{ color: {FG_DISABLED}; border-color: {BG_BTN}; background: #141622; }}
 QPushButton:focus {{ outline: none; border: 1px solid {ACCENT}; }}
 

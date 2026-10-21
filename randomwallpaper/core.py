@@ -93,7 +93,30 @@ DEFAULTS = {
     "change_mode": "midnight",
     "change_every": 60,            # minutes, for "every"
     "change_times": ["07:00", "19:00"],   # local HH:MM, for "times"
+    # What the rotation draws from: the calendar's season or holiday, or the
+    # wallpapers put in the shuffle set, whatever the date. See rotation().
+    "rotation": "calendar",
+    # Several monitors: one wallpaper on all of them, a monitor plugged in
+    # taking the main one's ("sync"), or each its own ("separate"). See
+    # screens_mode(). The main one is named here, "" meaning the built-in
+    # panel, or failing that the first output the desktop lists.
+    "screens": "sync",
+    "primary_output": "",
 }
+
+SCREEN_MODES = [
+    ("Same on every screen", "sync"),
+    ("Each screen its own", "separate"),
+]
+
+ROTATIONS = [
+    ("Follow the calendar", "calendar"),
+    ("Shuffle my picks", "shuffle"),
+]
+# The shuffle set is a category like the seasons — a directory under SAVE_DIR
+# filled from the Downloaded tab — but not a theme: nothing is downloaded for
+# it and the calendar never lands on it.
+SHUFFLE = "shuffle"
 
 CHANGE_MODES = [
     ("At midnight", "midnight"),
@@ -176,7 +199,49 @@ def theme_index(key):
 
 
 def theme_label(key):
+    if key == SHUFFLE:
+        return "Shuffle"
     return theme_entry(key)[1]
+
+
+def pin_categories():
+    """Everything a wallpaper can be pinned to: every theme but "all", in
+    calendar order, then the shuffle set."""
+    return [key for key, *_ in THEMES if key != "all"] + [SHUFFLE]
+
+
+def rotation(prefs):
+    """"calendar" or "shuffle" — anything else, a config from a later version
+    say, is the calendar, which is what the rotation always was."""
+    value = prefs.get("rotation", "calendar")
+    return value if value in {key for _, key in ROTATIONS} else "calendar"
+
+
+def screens_mode(prefs):
+    """"sync" or "separate" — "separate" only where the desktop can set a
+    wallpaper per output, since anywhere else it could not be kept."""
+    value = prefs.get("screens", "sync")
+    if value == "separate" and can_set_per_output():
+        return "separate"
+    return "sync"
+
+
+# Connector prefixes of a laptop's own panel: the screen that is there
+# whatever gets plugged in, and so the natural one to copy from.
+BUILT_IN = ("eDP", "LVDS", "DSI")
+
+
+def primary_output(prefs, outputs):
+    """The output the others follow, among `outputs` (in the desktop's own
+    order). None when there is none to name."""
+    names = list(outputs)
+    chosen = prefs.get("primary_output") or ""
+    if chosen in names:
+        return chosen
+    for name in names:
+        if name.startswith(BUILT_IN):
+            return name
+    return names[0] if names else None
 
 
 def theme_key(prefs):
@@ -706,6 +771,19 @@ def set_wallpaper(path):
     desktop.set_wallpaper(path)
 
 
+def can_set_per_output():
+    try:
+        return desktop.can_set_per_output()
+    except OSError:
+        return False
+
+
+def set_wallpaper_on(output, path):
+    """One output only — the others keep what they show. Raises like
+    set_wallpaper; two arguments, and the tests stand a fake in for it too."""
+    desktop.set_wallpaper_on(output, path)
+
+
 def same_file(a, b):
     """Whether two paths are the same file, hardlinks included."""
     try:
@@ -751,6 +829,24 @@ def outputs_behind(state, outputs):
     return sorted(name for name, path in outputs.items()
                   if not same_file(path, ours)
                   and (name not in seen or not Path(path).exists()))
+
+
+def changed_by_hand_per_output(state, outputs):
+    """The latch's question with each screen on its own: is any output the
+    last tick saw showing something other than what the rotation put on it?
+
+    An output the rotation never drew for — plugged in since, or everything
+    from before "each screen its own" was switched on — has nothing to
+    contradict, and so is no answer either way.
+    """
+    ours = state.get("paths") or {}
+    seen = set(state.get("outputs", []))
+    for name, path in outputs.items():
+        mine = ours.get(name)
+        if (mine and name in seen and Path(mine).exists()
+                and not same_file(path, mine)):
+            return True
+    return False
 
 
 def wallpaper_was_changed_by_hand(state, outputs=None):
@@ -921,7 +1017,8 @@ def prune_auto(keep=AUTO_KEEP):
     that period as applied, so no tick will fetch it again until the calendar
     moves on, and the wallpaper on screen is a file that no longer exists.
     """
-    spared = {load_state().get("path")}
+    state = load_state()
+    spared = {state.get("path"), *(state.get("paths") or {}).values()}
     files = [p for p in AUTO_DIR.glob("*") if str(p) not in spared]
     files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     for stale in files[keep:]:
@@ -931,7 +1028,7 @@ def prune_auto(keep=AUTO_KEEP):
             pass
 
 
-def fetch_for_period(prefs, theme, period, avoid=None, fresh=None):
+def fetch_for_period(prefs, theme, period, avoid=None, fresh=None, tag=None):
     """The wallpaper for this period, downloaded if it is not here yet.
 
     Downloading first and applying second is the order that matters: a failed
@@ -945,14 +1042,20 @@ def fetch_for_period(prefs, theme, period, avoid=None, fresh=None):
     `fresh` names a download that must be new — a change through the day,
     with nothing pinned, is a different picture each time rather than the
     period's one file set again. It is the slot, so each gets its own file.
+
+    `tag` is the output a draw is for, with each screen its own: a download
+    named for it, so two monitors are not handed the same file, and `avoid`
+    then lists everything already drawn for the others too.
     """
+    avoid = [] if avoid is None else [avoid] if isinstance(avoid, (str, Path)) else list(avoid)
     # What you chose for this category wins over anything downloadable, and it
     # is the whole reason the pool exists: the point of picking the Halloween
     # wallpapers yourself is not being given a different one.
     chosen = pool_images(theme)
     if chosen:
-        if avoid is not None and len(chosen) > 1:
-            others = [p for p in chosen if not same_file(p, avoid)]
+        if avoid and len(chosen) > 1:
+            others = [p for p in chosen
+                      if not any(same_file(p, a) for a in avoid)]
             chosen = others or chosen
         return random.choice(chosen)
 
@@ -960,6 +1063,8 @@ def fetch_for_period(prefs, theme, period, avoid=None, fresh=None):
     # Looked for before downloading either way: a slot whose apply failed
     # retries with the file it already has, not with a second download.
     stem = period if fresh is None else f"{period}_{fresh.replace(':', '')}"
+    if tag:
+        stem = f"{stem}@{tag}"
     existing = period_wallpaper(stem)
     if existing:
         return existing
@@ -970,6 +1075,64 @@ def fetch_for_period(prefs, theme, period, avoid=None, fresh=None):
     shutil.move(str(frame["path"]), dest)
     prune_auto()
     return dest
+
+
+def sync_new_outputs(prefs, state, outputs, log=print):
+    """A monitor plugged in shows the main one's wallpaper — whatever that
+    is, the rotation's or one set by hand, and with the rotation on or off.
+
+    New means not there at the last tick (state["outputs"]). With no last
+    tick to compare with — the very first, or one right after a wake that
+    got no answer — nothing is new, rather than everything. `outputs` is
+    updated in place with what each output shows now. Returns the outputs
+    that could not be brought in line, for the next tick to try again.
+    """
+    seen = state.get("outputs")
+    if not outputs or not seen:
+        return []
+    new = [name for name in outputs if name not in seen]
+    # Copied from a screen that was already there: one being plugged in
+    # with it is the very one with nothing worth copying yet.
+    main = primary_output(prefs, {n: p for n, p in outputs.items() if n in seen})
+    if not new or main is None or not Path(outputs[main]).exists():
+        return []
+    source = outputs[main]
+    failed = []
+    for name in new:
+        if same_file(outputs[name], source):
+            continue
+        try:
+            set_wallpaper_on(name, source)
+        except (subprocess.SubprocessError, OSError) as exc:
+            log(f"{name}: plugged in, but could not give it {main}'s "
+                f"wallpaper: {exc}")
+            failed.append(name)
+            continue
+        outputs[name] = Path(source)
+        log(f"{name}: plugged in — the same wallpaper as {main}")
+    return failed
+
+
+def match_main_output(prefs, log=print):
+    """Every output showing what the main one does, now — the switch to the
+    same on every screen, with no rotation to redraw it. Returns how many
+    were changed."""
+    outputs = wallpapers_on_outputs()
+    main = primary_output(prefs, outputs)
+    if main is None or not Path(outputs[main]).exists():
+        return 0
+    changed = 0
+    for name, path in outputs.items():
+        if name == main or same_file(path, outputs[main]):
+            continue
+        try:
+            set_wallpaper_on(name, outputs[main])
+            changed += 1
+        except (subprocess.SubprocessError, OSError) as exc:
+            log(f"{name}: could not give it {main}'s wallpaper: {exc}")
+    if changed:
+        log(f"every screen now shows {main}'s wallpaper")
+    return changed
 
 
 def run_auto(prefs, force=False, log=print, today=None, now=None, quiet=False):
@@ -994,7 +1157,12 @@ def run_auto(prefs, force=False, log=print, today=None, now=None, quiet=False):
         now = datetime.combine(today, datetime.min.time()) if today else datetime.now()
     today = now.date()
     note = (lambda _msg: None) if quiet else log
-    theme, period = current_period(today, prefs["easter"])
+    shuffling = rotation(prefs) == SHUFFLE
+    # Shuffling, the period is the shuffle set itself: it never ends, so the
+    # slot alone moves it on — and switching modes, either way, is a period
+    # other than the one recorded, so it applies at once.
+    theme, period = ((SHUFFLE, SHUFFLE) if shuffling
+                     else current_period(today, prefs["easter"]))
     slot = current_slot(prefs, now)
     through_the_day = prefs.get("change_mode", "midnight") != "midnight"
     state = load_state()
@@ -1014,10 +1182,18 @@ def run_auto(prefs, force=False, log=print, today=None, now=None, quiet=False):
     # the rotation off for good. So the first sighting is only noted, nothing
     # is changed on screen, and it takes a stranger still there a tick later
     # to latch.
-    outputs = {}
+    #
+    # Before any of it, and whether the rotation is on or not: a monitor
+    # just plugged in takes the main one's wallpaper, with every screen
+    # showing the same (sync_new_outputs). With each its own, it keeps
+    # whatever it had.
+    separate = screens_mode(prefs) == "separate"
+    outputs = wallpapers_on_outputs()
+    unsynced = [] if separate else sync_new_outputs(prefs, state, outputs, log)
+    behind = []
     if prefs["auto_enabled"] and not force:
-        outputs = wallpapers_on_outputs()
-        if wallpaper_was_changed_by_hand(state, outputs):
+        if (changed_by_hand_per_output(state, outputs) if separate
+                else wallpaper_was_changed_by_hand(state, outputs)):
             try:
                 since = now - datetime.fromisoformat(state["stranger_since"])
             except (KeyError, TypeError, ValueError):
@@ -1040,7 +1216,9 @@ def run_auto(prefs, force=False, log=print, today=None, now=None, quiet=False):
         if state.pop("stranger_since", None) is not None:
             save_state(state)       # a false alarm, or no answer: start over
 
-        behind = outputs_behind(state, outputs)
+        # With each screen its own, one showing something old is just that
+        # screen's own wallpaper, until its next draw.
+        behind = [] if separate else outputs_behind(state, outputs)
         if behind:
             # Put without a connector, it reaches every output there now.
             try:
@@ -1049,17 +1227,25 @@ def run_auto(prefs, force=False, log=print, today=None, now=None, quiet=False):
                 behind = []
             except (subprocess.SubprocessError, OSError) as exc:
                 log(f"could not bring {', '.join(behind)} up to date: {exc}")
-        # Remembered only from a real answer: an empty one right after a wake
-        # would make every output look newly plugged in on the next tick. And
-        # not an output still behind: remembered, its old wallpaper would read
-        # as one set by hand, when the next tick should just try again.
-        seen = sorted(name for name in outputs if name not in behind)
-        if seen and state.get("outputs") != seen:
-            state["outputs"] = seen
-            save_state(state)
+    # Remembered only from a real answer: an empty one right after a wake
+    # would make every output look newly plugged in on the next tick. And
+    # not an output still behind: remembered, its old wallpaper would read
+    # as one set by hand, when the next tick should just try again.
+    seen = sorted(name for name in outputs
+                  if name not in behind and name not in unsynced)
+    if seen and state.get("outputs") != seen:
+        state["outputs"] = seen
+        save_state(state)
 
     if not prefs["auto_enabled"] and not force:
         note(f"automatic rotation is off (today is {period})")
+        return 0
+
+    if shuffling and not pool_images(SHUFFLE):
+        # Nothing to shuffle is nothing to do. Not a download: a set of your
+        # own picks is the whole point, and "all" would quietly stand in.
+        note(f"nothing in the shuffle set yet — add some on the Downloaded "
+             f"tab, or put files in {theme_pool(SHUFFLE)}")
         return 0
 
     stamp = today.isoformat()
@@ -1101,10 +1287,26 @@ def run_auto(prefs, force=False, log=print, today=None, now=None, quiet=False):
             note(f"last download failed at {failed_at} — waiting before the next")
             return 0
 
+    # Each screen its own: a draw per output, none repeating another's or
+    # what that output had, where the pool is deep enough for that.
+    targets = list(outputs) if separate else []
+    if separate and not targets:
+        note("cannot tell the monitors apart right now — trying again next tick")
+        return 1
+    drawn = {}
     try:
-        path = fetch_for_period(prefs, theme, period,
-                                avoid=state.get("path") if not force else None,
-                                fresh=slot if through_the_day else None)
+        if targets:
+            had = state.get("paths") or {}
+            for name in targets:
+                avoid = [] if force else [p for p in (had.get(name),) if p]
+                drawn[name] = fetch_for_period(
+                    prefs, theme, period, avoid=avoid + list(drawn.values()),
+                    fresh=slot if through_the_day else None, tag=name)
+            path = drawn[primary_output(prefs, outputs)]
+        else:
+            path = fetch_for_period(prefs, theme, period,
+                                    avoid=state.get("path") if not force else None,
+                                    fresh=slot if through_the_day else None)
     except (urllib.error.URLError, http.client.HTTPException, OSError,
             ValueError, FetchError) as exc:
         state["failed_at"] = now.isoformat(timespec="seconds")
@@ -1113,7 +1315,14 @@ def run_auto(prefs, force=False, log=print, today=None, now=None, quiet=False):
         return 1
 
     try:
-        set_wallpaper(path)
+        if drawn:
+            # The main one last: the desktop's colours follow whichever
+            # wallpaper was set most recently, and they should be its.
+            main = primary_output(prefs, outputs)
+            for name in sorted(drawn, key=lambda n: n == main):
+                set_wallpaper_on(name, drawn[name])
+        else:
+            set_wallpaper(path)
     except (subprocess.SubprocessError, OSError) as exc:
         # The file is kept — fetch_for_period() will find it next tick — but
         # the period is not recorded, so the next tick does try again.
@@ -1130,8 +1339,14 @@ def run_auto(prefs, force=False, log=print, today=None, now=None, quiet=False):
         # Kept across the apply: a monitor that was already there is not
         # "just plugged in" because the wallpaper changed.
         **({"outputs": state["outputs"]} if state.get("outputs") else {}),
+        **({"paths": {name: str(file) for name, file in drawn.items()}}
+           if drawn else {}),
     })
-    log(f"{period}: {theme_label(theme)} — {path}")
+    if drawn:
+        for name, file in drawn.items():
+            log(f"{period}: {theme_label(theme)} — {name}: {file}")
+    else:
+        log(f"{period}: {theme_label(theme)} — {path}")
     return 0
 
 

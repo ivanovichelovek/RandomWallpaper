@@ -160,9 +160,19 @@ class Reel(QMainWindow):
         except OSError as exc:
             self.show_toast(f"Saved, but not linked into Pictures: {exc}")
 
-    def set_and_latch(self, path, failure="could not set it"):
+    def this_output(self):
+        """The monitor this window is on, by the name the desktop uses for
+        it — or None where the two do not agree on one."""
+        screen = self.screen()
+        name = screen.name() if screen else ""
+        return name if name in core.wallpapers_on_outputs() else None
+
+    def set_and_latch(self, path, failure="could not set it", output=None):
         try:
-            core.set_wallpaper(path)
+            if output:
+                core.set_wallpaper_on(output, path)
+            else:
+                core.set_wallpaper(path)
         except (subprocess.SubprocessError, OSError) as exc:
             self.show_toast(f"{failure}: {exc}")
             return False
@@ -177,7 +187,12 @@ class Reel(QMainWindow):
         return True
 
     def apply_wallpaper(self, path):
-        self.set_and_latch(path, failure="Saved, but could not set it")
+        # Each screen its own: saved from the reel, it goes on the screen the
+        # reel is on — the one being looked at while choosing it.
+        output = (self.this_output()
+                  if core.screens_mode(self.prefs) == "separate" else None)
+        self.set_and_latch(path, failure="Saved, but could not set it",
+                           output=output)
 
     # ── chrome ───────────────────────────────────────────────────────────
     def filters_changed(self):
@@ -194,6 +209,7 @@ class Reel(QMainWindow):
         if name == "library":
             self.library.reload()
         elif name == "settings":
+            self.settings.fill_outputs()     # monitors come and go
             self.settings.refresh_hint()
 
     def set_position(self, text):

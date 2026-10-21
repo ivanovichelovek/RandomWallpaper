@@ -50,6 +50,15 @@ changes the wallpaper immediately; within one, the **Change** setting picks
 *at midnight*, *every N minutes/hours* (min. 15 min) or *at set times*.
 Pinned wallpapers take turns; with nothing pinned, a fresh one is downloaded.
 
+**Shuffle my picks** (Settings → Rotation) ignores the calendar: mark
+wallpapers with **★ Shuffle** on the Downloaded tab, and a random one of them
+goes up every hour (or as set in **Change**).
+
+**Screens** (Settings) — with several monitors: *Same on every screen*
+gives a monitor you plug in the main screen's wallpaper (rotation on or off);
+*Each screen its own* draws a different one per monitor, and **Set as
+wallpaper** asks which screen. Per-screen wallpapers need Noctalia.
+
 Setting a wallpaper by hand turns the rotation off. Turn it back on in
 Settings or with `--auto-on`; `--auto-toggle` is handy for a keybind.
 
@@ -65,6 +74,7 @@ Settings or with `--auto-on`; `--auto-toggle` is handy for a keybind.
 
 * `~/random_wallpaper/` — saved wallpapers (override with `RANDOM_WALLPAPER_DIR`)
 * `~/random_wallpaper/<season-or-holiday>/` — pinned wallpapers
+* `~/random_wallpaper/shuffle/` — the ★ shuffle set
 * Cache, config and state — platform defaults via `platformdirs`
 
 A Wallhaven API key is optional; it is read from `WALLHAVEN_API_KEY`, then

@@ -14,7 +14,8 @@ from PySide6.QtCore import (
     QEvent, QObject, QRunnable, QSize, Qt, QThreadPool, Signal, Slot,
 )
 from PySide6.QtGui import (
-    QColor, QFont, QFontMetrics, QIcon, QImage, QImageReader, QPainter, QPixmap,
+    QColor, QFont, QFontMetrics, QIcon, QImage, QImageReader, QPainter, QPen,
+    QPixmap,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu,
@@ -117,6 +118,24 @@ class _TileDelegate(QStyledItemDelegate):
                                             Qt.ElideMiddle, name_rect.width()))
 
         categories = index.data(CATEGORIES_ROLE) or []
+        if core.SHUFFLE in categories:
+            # Outlined and starred, so the shuffle set reads at a glance
+            # across a whole grid — a tag alone is one small word among many.
+            color = QColor(CATEGORY_COLORS[core.SHUFFLE])
+            painter.setPen(QPen(color, 2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(option.rect.adjusted(3, 3, -3, -3), 8, 8)
+            star_font = QFont(option.font)
+            star_font.setPixelSize(15)
+            painter.setFont(star_font)
+            badge = option.rect.adjusted(ITEM_INSET, ITEM_INSET, -ITEM_INSET, 0)
+            badge.setHeight(22)
+            badge.setLeft(badge.right() - 22)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(0, 0, 0, 150))
+            painter.drawEllipse(badge.adjusted(2, 2, -2, -2))
+            painter.setPen(color)
+            painter.drawText(badge, Qt.AlignCenter, "★")
         if not categories:
             painter.restore()
             return
@@ -241,6 +260,12 @@ class LibraryPage(QWidget):
         self.count.setStyleSheet("color:#8B90A8; font-family:monospace; font-size:11px;")
         bl.addWidget(self.count, 1)
 
+        self.shuffle_only = QPushButton("★ only")
+        self.shuffle_only.setCheckable(True)
+        self.shuffle_only.setToolTip("Show only the wallpapers in the shuffle set")
+        self.shuffle_only.toggled.connect(self.apply_filter)
+        bl.addWidget(self.shuffle_only)
+
         self.delete_btn = QPushButton("Delete")
         self.delete_btn.setProperty("class", "danger")
         self.delete_btn.setToolTip("Delete the selected wallpapers from disk (Del)")
@@ -254,11 +279,18 @@ class LibraryPage(QWidget):
         self.pin_btn.setMenu(self.pin_menu)
         bl.addWidget(self.pin_btn)
 
+        self.shuffle_btn = QPushButton("★ Shuffle")
+        self.shuffle_btn.clicked.connect(self.toggle_shuffle)
+        bl.addWidget(self.shuffle_btn)
+
         self.set_btn = QPushButton("Set as wallpaper")
         self.set_btn.setProperty("class", "accent")
         self.set_btn.setToolTip("Put this one on the desktop now")
         self.set_btn.clicked.connect(self.set_as_wallpaper)
         bl.addWidget(self.set_btn)
+        # Each screen its own: the button opens a choice of screen instead.
+        self.screen_menu = QMenu(self)
+        self.screen_menu.aboutToShow.connect(self.refresh_screen_menu)
 
         confirm = QWidget()
         confirm.setObjectName("confirm")
@@ -313,9 +345,7 @@ class LibraryPage(QWidget):
                     add(path)
         except OSError:
             pass
-        for key, _, _, _ in core.THEMES:
-            if key == "all":
-                continue
+        for key in core.pin_categories():
             for path in core.pool_images(key):
                 add(path, key)
         return sorted(((path, categories) for path, categories in found.values()),
@@ -344,8 +374,8 @@ class LibraryPage(QWidget):
         line = self.list.fontMetrics().lineSpacing()
         tile = QSize(THUMB_W + 24, THUMB_H + 2 * line + 38)
         for path, categories in self.entries:
-            # In calendar order, not alphabetical: THEMES is spring → easter.
-            ordered = [key for key, *_ in core.THEMES if key in categories]
+            # In calendar order, not alphabetical: spring → easter, shuffle.
+            ordered = [key for key in core.pin_categories() if key in categories]
             tag = "  ".join(core.theme_label(c) for c in ordered)
             item = QListWidgetItem(path.stem)
             item.setSizeHint(tile)
@@ -360,7 +390,7 @@ class LibraryPage(QWidget):
             else:
                 self.pool.start(_ThumbJob(path, self.thumb_signals))
 
-        self.sync()
+        self.apply_filter()
 
     def _thumb_ready(self, path_str, image):
         if image is None:
@@ -375,11 +405,38 @@ class LibraryPage(QWidget):
     def selected(self):
         return [Path(item.data(Qt.UserRole)) for item in self.list.selectedItems()]
 
+    def in_shuffle(self, path):
+        item = self.items.get(str(path))
+        return item is not None and core.SHUFFLE in (item.data(CATEGORIES_ROLE) or [])
+
+    def apply_filter(self):
+        only = self.shuffle_only.isChecked()
+        for item in self.items.values():
+            hide = only and core.SHUFFLE not in (item.data(CATEGORIES_ROLE) or [])
+            item.setHidden(hide)
+            if hide:
+                item.setSelected(False)
+        self.sync()
+
     def sync(self):
         chosen = self.selected()
         self.set_btn.setEnabled(len(chosen) == 1)
+        separate = core.screens_mode(self.win.prefs) == "separate"
+        if separate != (self.set_btn.menu() is not None):
+            self.set_btn.setMenu(self.screen_menu if separate else None)
         self.pin_btn.setEnabled(bool(chosen))
         self.delete_btn.setEnabled(bool(chosen))
+        self.shuffle_btn.setEnabled(bool(chosen))
+        # One button both ways: a selection already all in the set can only
+        # mean taking it out.
+        leaving = bool(chosen) and all(self.in_shuffle(p) for p in chosen)
+        self.shuffle_btn.setText("Remove from ★" if leaving else "★ Shuffle")
+        self.shuffle_btn.setToolTip(
+            "Take the selected wallpapers out of the shuffle set" if leaving else
+            "Add the selected wallpapers to the shuffle set — the rotation "
+            "draws from it when set to Shuffle my picks")
+        in_set = sum(core.SHUFFLE in cats for _, cats in self.entries)
+        self.shuffle_only.setText(f"★ only  {in_set}" if in_set else "★ only")
         total = len(self.entries)
         if chosen:
             self.count.setText(f"{len(chosen)} of {total} selected")
@@ -416,19 +473,32 @@ class LibraryPage(QWidget):
         super().keyPressEvent(event)
 
     # ── actions ──────────────────────────────────────────────────────────
-    def set_as_wallpaper(self):
+    def set_as_wallpaper(self, output=None):
         chosen = self.selected()
         if len(chosen) != 1:
             return
-        if self.win.set_and_latch(chosen[0], failure="Could not set it"):
-            self.win.show_toast(f"Wallpaper set  {chosen[0].name}")
+        if self.win.set_and_latch(chosen[0], failure="Could not set it",
+                                  output=output):
+            where = f" on {output}" if output else ""
+            self.win.show_toast(f"Wallpaper set{where}  {chosen[0].name}")
+
+    def refresh_screen_menu(self):
+        self.screen_menu.clear()
+        here = self.win.this_output()
+        for name in core.wallpapers_on_outputs():
+            text = f"{name}  — this screen" if name == here else name
+            action = self.screen_menu.addAction(text)
+            action.triggered.connect(lambda _=False, n=name: self.set_as_wallpaper(n))
+        self.screen_menu.addSeparator()
+        every = self.screen_menu.addAction("Every screen")
+        every.triggered.connect(lambda _=False: self.set_as_wallpaper())
 
     def links_of(self, path):
         """Every name this app gave the same image — SAVE_DIR, the platform's
         Pictures wallpapers folder, and every category pool. Deleting a
         wallpaper means the wallpaper is gone everywhere this app put it."""
         places = [core.SAVE_DIR, core.pictures_wallpapers()]
-        places += [core.theme_pool(key) for key, _, _, _ in core.THEMES if key != "all"]
+        places += [core.theme_pool(key) for key in core.pin_categories()]
         found = []
         for directory in places:
             try:
@@ -506,9 +576,10 @@ class LibraryPage(QWidget):
 
     def refresh_pin_menu(self):
         self.pin_menu.clear()
-        for key, label, _, _ in core.THEMES:
-            if key == "all":
-                continue
+        for key in core.pin_categories():
+            if key == core.SHUFFLE:
+                continue        # it has a button of its own
+            label = core.theme_label(key)
             count = len(core.pool_images(key))
             text = f"{label}   {count}" if count else label
             action = self.pin_menu.addAction(self._dot(key), text)
@@ -553,6 +624,34 @@ class LibraryPage(QWidget):
                 f"— {len(core.pool_images(theme))} chosen for it now")
         else:
             self.win.show_toast(f"Already pinned to {label}")
+        self.reload()
+
+    def toggle_shuffle(self):
+        chosen = self.selected()
+        if not chosen:
+            return
+        if not all(self.in_shuffle(p) for p in chosen):
+            self.pin(core.SHUFFLE)
+            return
+        # Out of the set is out of its directory only. A name there that is
+        # also the picture's only one — a file dropped straight into the
+        # folder — goes to the trash rather than away for good.
+        removed = 0
+        for path in chosen:
+            for pinned in core.pool_images(core.SHUFFLE):
+                if not self._same(path, pinned):
+                    continue
+                try:
+                    if pinned.stat().st_nlink > 1:
+                        pinned.unlink()
+                    elif not core.trash(pinned):
+                        continue
+                    removed += 1
+                except OSError:
+                    pass
+        self.win.show_toast(
+            f"Removed {removed} from Shuffle "
+            f"— {len(core.pool_images(core.SHUFFLE))} in it now")
         self.reload()
 
     @staticmethod
