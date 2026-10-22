@@ -1,2 +1,2 @@
 """Random Wallpaper: a reel of random wallpapers, cross-platform."""
-__version__ = "1.2.0"
+__version__ = "1.3.0"
