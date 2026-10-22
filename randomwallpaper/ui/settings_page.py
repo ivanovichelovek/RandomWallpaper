@@ -11,7 +11,7 @@ from datetime import date
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup, QCheckBox, QFormLayout, QFrame, QHBoxLayout, QLabel,
-    QLineEdit, QPushButton, QRadioButton, QScrollArea, QSpinBox, QVBoxLayout,
+    QLineEdit, QMessageBox, QPushButton, QRadioButton, QScrollArea, QSpinBox, QVBoxLayout,
     QWidget,
 )
 
@@ -301,6 +301,10 @@ class SettingsPage(QWidget):
         self.update_status.setStyleSheet("color:#8B90A8; font-size:11px;")
         self.update_status.hide()
         app.addWidget(self.update_status)
+        self.check_updates = QCheckBox("Check for updates at startup")
+        self.check_updates.setChecked(prefs["check_updates"])
+        self.check_updates.toggled.connect(self.apply)
+        app.addWidget(self.check_updates)
         self._release = None
         if update.install_kind() == "source":
             # Nothing here can replace a git checkout or a uv/pip install;
@@ -582,6 +586,7 @@ class SettingsPage(QWidget):
             "rotation": self._rotation(),
             "screens": self._screens(),
             "primary_output": self.main_output.currentData() or "",
+            "check_updates": self.check_updates.isChecked(),
         })
         core.save_prefs(self.prefs)
         self._show_change_widgets()
@@ -714,6 +719,49 @@ class SettingsPage(QWidget):
             win.post_to_ui(done)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def check_at_start(self):
+        """Quietly ask for a newer release; offer it if there is one.
+
+        Nothing is said when there is not, or when the feed cannot be
+        reached — the window has only just opened. A run from source is not
+        asked at all: there is nothing here that could update it.
+        """
+        if not self.prefs["check_updates"] or update.install_kind() == "source":
+            return
+        win = self.win
+
+        def work():
+            try:
+                release, newer = update.check()
+            except update.UpdateError:
+                return
+            if newer:
+                win.post_to_ui(lambda: self._offer(release))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _offer(self, release):
+        if self._release is not None:
+            return                  # already offered, or found by the button
+        self._release = release
+        self.update_button.setText(f"Update to {release['version']}")
+        self._say_update(f"{release['version']} is available — {release['url']}")
+        box = QMessageBox(self.win)
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle("Update available")
+        box.setText(f"Random Wallpaper {release['version']} is available — "
+                    f"this is {__version__}.")
+        box.setInformativeText("Install it now? The app restarts when it is "
+                               "done. Checking at startup can be turned off "
+                               "in Settings.")
+        install = box.addButton("Update", QMessageBox.AcceptRole)
+        box.addButton("Later", QMessageBox.RejectRole)
+        box.setDefaultButton(install)
+        box.exec()
+        if box.clickedButton() is install:
+            self.win.show_tab(self.win.tabs.indexOf(self))
+            self.install_update()
 
     def install_update(self):
         win = self.win

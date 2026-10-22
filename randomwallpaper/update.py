@@ -10,9 +10,10 @@ its platform uses for everything else:
             shown instead;
   windows   the new installer is run silently over the old install, which
             closes the app, replaces it and starts it again;
-  macos     the new .pkg is opened in macOS's own Installer, which puts the
-            app in /Applications (asking for the password that takes) and
-            starts it again from the package's postinstall script.
+  macos     the new .dmg is mounted and its app copied over this one,
+            wherever it lives — with the administrator's password, asked
+            for by macOS, when that folder is not this user's to write —
+            and the new version started once this one has quit.
 
 A run from source — a git checkout, `uv tool install`, `pip install` — is
 updated by whatever installed it, and is only told so.
@@ -156,7 +157,7 @@ def asset_name(version, kind=None, machine=None, fmt=None):
         return f"RandomWallpaper-{version}-windows-x64-setup.exe"
     if kind == "macos":
         arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
-        return f"RandomWallpaper-{version}-macos-{arch}.pkg"
+        return f"RandomWallpaper-{version}-macos-{arch}.dmg"
     return None
 
 
@@ -318,19 +319,82 @@ def apply(release, progress=None):
                    "/CLOSEAPPLICATIONS"])
         return f"installing {release['version']} — the app restarts by itself"
 
-    # macOS: the same installer package a first install uses. /Applications
-    # is not writable without an administrator's password, and Installer is
-    # the one thing on a Mac that is meant to ask for it.
+    return _apply_macos(release, name, progress)
+
+
+# ── macOS, from the disk image ──────────────────────────────────────────────
+def _apply_macos(release, name, progress):
     bundle = macos_bundle()
     problem = macos_misplaced(bundle)
     if problem:
         raise UpdateError(problem)
-    new = download(release, name, tempfile.gettempdir(), progress)
-    package = new.with_name(name)
-    os.replace(new, package)
-    _detached(["open", str(package)])
-    return (f"opening the {release['version']} installer — the app starts "
-            f"again when it finishes")
+    work = Path(tempfile.mkdtemp(prefix="random-wallpaper-update-"))
+    try:
+        image = work / name
+        os.replace(download(release, name, work, progress), image)
+        mount = work / "mount"
+        mount.mkdir()
+        done = subprocess.run(["hdiutil", "attach", "-nobrowse", "-readonly",
+                               "-noautoopen", "-mountpoint", str(mount),
+                               str(image)],
+                              capture_output=True, text=True, timeout=300)
+        if done.returncode:
+            raise UpdateError(f"could not open {name}: "
+                              f"{(done.stderr or done.stdout).strip()}")
+        try:
+            # The image's name for it, whatever this copy was renamed to.
+            source = mount / "Random Wallpaper.app"
+            if not (source / "Contents" / "Info.plist").is_file():
+                raise UpdateError(f"{name} has no {source.name}")
+            _replace_bundle(source, bundle)
+        finally:
+            subprocess.run(["hdiutil", "detach", "-force", str(mount)],
+                           capture_output=True, timeout=60)
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+    _relaunch_after_exit(["open", str(bundle)])
+    return f"updated to {release['version']} — restarting"
+
+
+def _replace_bundle(source, bundle):
+    """Put the app at `source` where `bundle` is, all or nothing."""
+    import shlex
+    new = bundle.with_name(f".{bundle.name}.new")
+    old = bundle.with_name(f".{bundle.name}.old")
+    q = lambda p: shlex.quote(str(p))                       # noqa: E731
+    # Copied beside the old one first, so the swap is two renames on one
+    # disk; a failed copy leaves the old app untouched, and a failed second
+    # rename puts it back. The quarantine flag comes off: the download was
+    # checked against SHA256SUMS already.
+    script = (f"rm -rf {q(new)} {q(old)} && ditto {q(source)} {q(new)} && "
+              f"{{ xattr -dr com.apple.quarantine {q(new)} 2>/dev/null; "
+              f"true; }} && mv {q(bundle)} {q(old)} && "
+              f"{{ mv {q(new)} {q(bundle)} || {{ mv {q(old)} {q(bundle)}; "
+              f"exit 1; }}; }} && rm -rf {q(old)}")
+    # A copy from the old .pkg is root's, and /Applications is only the
+    # admin group's: either way this user cannot swap it without asking.
+    mine = (os.access(bundle.parent, os.W_OK)
+            and all(p.stat().st_uid == os.getuid()
+                    for p in (bundle, bundle / "Contents")))
+    if mine:
+        argv = ["/bin/sh", "-c", script]
+    else:
+        # The one prompt for an administrator's password a Mac app is
+        # meant to use.
+        quoted = script.replace("\\", "\\\\").replace('"', '\\"')
+        argv = ["osascript", "-e",
+                f'do shell script "{quoted}" with administrator privileges']
+    try:
+        done = subprocess.run(argv, capture_output=True, text=True,
+                              timeout=900)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise UpdateError(f"could not replace the app: {exc}") from exc
+    if done.returncode:
+        detail = (done.stderr or done.stdout).strip()
+        if "-128" in detail:                    # User canceled.
+            raise UpdateError("the password prompt was dismissed — nothing "
+                              "changed")
+        raise UpdateError(f"could not replace the app: {detail}")
 
 
 # ── Linux, through the package manager ──────────────────────────────────────

@@ -1,13 +1,13 @@
 #!/bin/bash
-# Install the .pkg with macOS's Installer, check that the app landed in
-# /Applications and works — including the timer — then take it back out.
+# Copy the app out of the .dmg into /Applications, as a drag would, check
+# that it works — including the timer — then take it back out.
 #
-#   check_macos.sh <version> <path to .pkg>
+#   check_macos.sh <version> <path to .dmg>
 #
 # Needs sudo without a password, as GitHub's macOS runners have. Failures
 # are also GitHub ::error:: annotations.
 set -u
-VERSION=$1 PKG=$2
+VERSION=$1 DMG=$2
 APP="/Applications/Random Wallpaper.app"
 BIN="$APP/Contents/MacOS/random-wallpaper"
 LABEL=dev.ivanc.RandomWallpaper.auto
@@ -17,16 +17,19 @@ fail() { echo "::error::$1"; echo "FAIL  $1"; failures=$((failures + 1)); }
 pass() { echo "PASS  $1"; }
 check() { local label=$1; shift; if "$@" >/dev/null 2>&1; then pass "$label"; else fail "$label"; fi; }
 
-echo "== install $PKG"
-if ! sudo installer -pkg "$PKG" -target /; then fail "Installer refused the package"; exit 1; fi
-
-# In /Applications, not "upgraded" in place wherever the build left a copy
-# of the same bundle id — what a relocatable component would do.
+echo "== install $DMG"
+mount=$(mktemp -d)
+if ! hdiutil attach -nobrowse -readonly -mountpoint "$mount" "$DMG" >/dev/null; then
+    fail "hdiutil could not open the image"; exit 1
+fi
+check "the image links to /Applications" sh -c "[ \"\$(readlink '$mount/Applications')\" = /Applications ]"
+sudo rm -rf "$APP"
+ditto "$mount/Random Wallpaper.app" "$APP"   # admin group: no sudo, like a drag
+hdiutil detach "$mount" >/dev/null
 check "the app is in /Applications" test -x "$BIN"
 plist_version=$(plutil -extract CFBundleShortVersionString raw "$APP/Contents/Info.plist" 2>/dev/null)
 [ "$plist_version" = "$VERSION" ] && pass "Info.plist says $VERSION" \
     || fail "Info.plist says '$plist_version', wanted $VERSION"
-check "Installer recorded the package" sh -c "pkgutil --pkg-info dev.ivanc.RandomWallpaper | grep -q 'version: $VERSION'"
 
 out=$("$BIN" --version 2>&1)
 [ "$out" = "random-wallpaper $VERSION (macOS app)" ] && pass "--version: $out" \
@@ -62,6 +65,6 @@ else
 fi
 
 echo "== remove"
-sudo rm -rf "$APP" && sudo pkgutil --forget dev.ivanc.RandomWallpaper >/dev/null
+sudo rm -rf "$APP"
 echo "== $failures failed"
 [ "$failures" -eq 0 ]

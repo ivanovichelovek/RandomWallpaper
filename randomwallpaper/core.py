@@ -102,6 +102,9 @@ DEFAULTS = {
     # panel, or failing that the first output the desktop lists.
     "screens": "sync",
     "primary_output": "",
+    # Ask GitHub for a newer release each time the window opens, and offer
+    # to install it. Installed builds only; see ui.settings_page.
+    "check_updates": True,
 }
 
 SCREEN_MODES = [

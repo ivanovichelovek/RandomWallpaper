@@ -13,7 +13,7 @@ From the [latest release](https://github.com/ivanovichelovek/RandomWallpaper/rel
 | System | File | Install |
 |---|---|---|
 | Windows 10/11 | `RandomWallpaper-<version>-windows-x64-setup.exe` | run it (per-user, no admin) |
-| macOS 13+ (Apple silicon) | `RandomWallpaper-<version>-macos-arm64.pkg` | open it |
+| macOS 13+ (Apple silicon) | `RandomWallpaper-<version>-macos-arm64.dmg` | open it, drag the app to Applications |
 | Arch Linux | `random-wallpaper-<version>-1-x86_64.pkg.tar.zst` | `sudo pacman -U random-wallpaper-*.pkg.tar.zst` |
 | Debian / Ubuntu | `random-wallpaper_<version>_amd64.deb` | `sudo apt install ./random-wallpaper_*.deb` |
 | Fedora / openSUSE | `random-wallpaper-<version>-1.x86_64.rpm` | `sudo dnf install ./random-wallpaper-*.rpm` |
@@ -21,8 +21,9 @@ From the [latest release](https://github.com/ivanovichelovek/RandomWallpaper/rel
 Builds are unsigned: on Windows click **More info → Run anyway**; on macOS
 **System Settings → Privacy & Security → Open Anyway**.
 
-**Updating:** Settings → App → Check for updates, or
-`random-wallpaper --update`. Downloads are verified against `SHA256SUMS`.
+**Updating:** the app checks for a new release when it opens and offers to
+install it (Settings → App → Check for updates at startup turns that off);
+or Settings → App → Check for updates, or `random-wallpaper --update`. Downloads are verified against `SHA256SUMS`.
 
 ### From source
 

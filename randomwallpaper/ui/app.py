@@ -14,7 +14,7 @@ import sys
 
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import QApplication
@@ -96,4 +96,6 @@ def run_app(prefs, args):
     server.newConnection.connect(handle_new_connection)
 
     win.show()
+    # Once the window is up, so a slow or absent network never holds it.
+    QTimer.singleShot(1500, win.settings.check_at_start)
     return app.exec()

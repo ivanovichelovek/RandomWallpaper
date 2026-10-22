@@ -170,14 +170,14 @@ jobs:
         env: { QT_QPA_PLATFORM: offscreen }
       - run: iconutil -c icns packaging/macos/icon.iconset -o packaging/macos/icon.icns
       - run: uv run pyinstaller --noconfirm packaging/pyinstaller.spec
-      - run: packaging/macos/build-pkg.sh
+      - run: packaging/macos/build-dmg.sh
         env: { PYTHON: .venv/bin/python }
       - name: Install, check, run, remove
-        run: tests/install/check_macos.sh "${{ needs.version.outputs.version }}" "$(ls dist/installer/*.pkg)"
+        run: tests/install/check_macos.sh "${{ needs.version.outputs.version }}" "$(ls dist/installer/*.dmg)"
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: dist/installer/*.pkg
+          path: dist/installer/*.dmg
           if-no-files-found: error
 
   publish:
