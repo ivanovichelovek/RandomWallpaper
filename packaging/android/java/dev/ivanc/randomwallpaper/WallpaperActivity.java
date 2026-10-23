@@ -43,8 +43,24 @@ public class WallpaperActivity extends QtActivity {
         }
     }
 
+    /** An activity of this class has been created in this process before. */
+    private static boolean created = false;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        if (created) {
+            // Recreated in a process that already has Qt in it. Once Python
+            // is running, Qt restarts the whole app here itself (it cannot
+            // carry on across an activity-only restart); before then — a
+            // recreate in the first second of a launch — it loaded itself a
+            // second time and hung without ever starting Python. Either way
+            // the answer is the same, so it is given here, for both: a fresh
+            // task, and this process gone.
+            Log.i(TAG, "recreated: restarting the app");
+            startActivity(android.content.Intent.makeRestartActivityTask(getComponentName()));
+            Runtime.getRuntime().exit(0);
+        }
+        created = true;
         mActivity = this;
         File appRoot = new File(getAppRoot());
         PythonUtil.unpackAsset(this, "private", appRoot, true);
