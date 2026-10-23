@@ -179,10 +179,20 @@ def tour(win):
         ("other-random", lambda: (flip(), win.show_tab(0))),
         ("other-saved", lambda: win.show_tab(1)),
         ("other-settings", settings_to(0)),
+        # The rotation's job, switched on the way Settings does it.
+        ("schedule", lambda: schedule_rotation()),
         # The in-app update's last step, on the build itself: Android's
         # "update this app?" screen should be on top for the screenshot.
         ("update-installer", lambda: try_installer()),
     ]
+
+    def schedule_rotation():
+        from randomwallpaper import schedule
+        try:
+            schedule.ensure_installed()
+            print(f"rw-tour: rotation {schedule.status()}", flush=True)
+        except Exception as exc:
+            print(f"rw-tour: rotation NOT scheduled: {exc!r}", flush=True)
 
     def try_installer():
         from randomwallpaper.desktop import android

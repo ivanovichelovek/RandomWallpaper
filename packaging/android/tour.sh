@@ -64,6 +64,17 @@ for _ in $(seq 1 240); do
     fi
 done
 adb exec-out screencap -p > "$OUT/screen-last.png"
+
+# The rotation with the app closed: the tour scheduled AutoJob; run it now
+# rather than in 15 minutes, and give it time to fetch and set a wallpaper.
+adb shell am force-stop "$PKG"
+adb shell cmd jobscheduler run -f "$PKG" 7101
+for _ in $(seq 1 45); do
+    sleep 2
+    grep -q "rw-auto:" "$OUT/logcat.txt" && break
+done
+adb exec-out screencap -p > "$OUT/screen-after-rotation.png"
+grep -E "rw-auto:|RandomWallpaper" "$OUT/logcat.txt" | tail -n 5
 kill "$logcat" 2>/dev/null
 grep -E "python|Python|rw-tour|Traceback|Error" "$OUT/logcat.txt" | tail -n 200
 ls -l "$OUT"

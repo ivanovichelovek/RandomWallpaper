@@ -26,7 +26,7 @@ import os
 import sys
 from pathlib import Path
 
-from .paths import APP_ID, IS_LINUX, IS_MACOS, IS_WINDOWS
+from .paths import APP_ID, IS_ANDROID, IS_LINUX, IS_MACOS, IS_WINDOWS
 
 LAUNCH_AGENT_LABEL = "dev.ivanc.RandomWallpaper.auto"
 TIMER_VERSION = 2
@@ -336,6 +336,11 @@ def uninstall_windows():
 
 
 def install():
+    if IS_ANDROID:
+        from .desktop import android
+        if not android.schedule_auto(True):
+            raise RuntimeError("Android did not take the job")
+        return "Android's JobScheduler, about every 15 minutes"
     if IS_LINUX:
         return install_linux()
     if IS_MACOS:
@@ -346,6 +351,10 @@ def install():
 
 
 def uninstall():
+    if IS_ANDROID:
+        from .desktop import android
+        android.schedule_auto(False)
+        return
     if IS_LINUX:
         return uninstall_linux()
     if IS_MACOS:
@@ -367,6 +376,10 @@ def status():
     repository most likely, which writing through would change behind its
     owner's back. Windows has no such case; the task name is this app's.
     """
+    if IS_ANDROID:
+        # One job, ours, rewritten in place: never outdated or foreign.
+        from .desktop import android
+        return "current" if android.auto_scheduled() else "missing"
     exe = _executable()
     if IS_LINUX:
         path = _linux_unit_dir() / "random-wallpaper-auto.timer"

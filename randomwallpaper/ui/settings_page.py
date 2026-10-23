@@ -83,10 +83,6 @@ class SettingsPage(QWidget):
         # ══ left: changing the wallpaper ════════════════════════════════
         auto_card, auto = card(spacing=14)
         columns.left.addWidget(auto_card)
-        # Nothing runs the rotation on a phone while the app is closed —
-        # no systemd, launchd or Task Scheduler — so there is nothing here
-        # to switch on.
-        auto_card.setVisible(not IS_ANDROID)
 
         head, self.auto_about = titled(
             "Change the wallpaper by itself",
@@ -371,8 +367,7 @@ class SettingsPage(QWidget):
             column.addStretch(1)
         root_layout.addStretch(1)
         self.refresh_hint()
-        if not IS_ANDROID:
-            self.check_timer()
+        self.check_timer()
 
     @staticmethod
     def _times_ok(value):

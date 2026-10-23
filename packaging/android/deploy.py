@@ -23,7 +23,9 @@ from deploy_lib.android import buildozer  # noqa: E402
 # pyjnius: WallpaperManager. The rest are pure Python, pip-installed by p4a.
 EXTRA_REQUIREMENTS = ["pyjnius", "certifi", "platformdirs"]
 # REQUEST_INSTALL_PACKAGES: an update hands its .apk to the installer.
-EXTRA_PERMISSIONS = ["INTERNET", "SET_WALLPAPER", "REQUEST_INSTALL_PACKAGES"]
+# RECEIVE_BOOT_COMPLETED: the rotation's job is kept across a reboot.
+EXTRA_PERMISSIONS = ["INTERNET", "SET_WALLPAPER", "REQUEST_INSTALL_PACKAGES",
+                     "RECEIVE_BOOT_COMPLETED"]
 
 _written = buildozer.BuildozerConfig.__init__
 
@@ -60,6 +62,10 @@ def _adjusted(self, spec_file, pysidedeploy_config):
     # setting a wallpaper causes (java/…/WallpaperActivity.java).
     java = Path(__file__).resolve().parent / "java"
     self.set_value("app", "android.add_src", str(java))
+    # python-for-android from build-apk.sh's copy, whose manifest declares
+    # the rotation's job service.
+    if os.environ.get("P4A_DIR"):
+        self.set_value("app", "p4a.source_dir", os.environ["P4A_DIR"])
     self.set_value("app", "android.entrypoint", "dev.ivanc.randomwallpaper.WallpaperActivity")
     # The SDK packages are installed already; nothing to prompt for.
     self.set_value("app", "android.accept_sdk_license", "True")

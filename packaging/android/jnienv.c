@@ -22,9 +22,19 @@
 typedef JavaVM *(*qt_java_vm)(void);
 typedef jint (*created_vms)(JavaVM **, jsize, jsize *);
 
+static JavaVM *vm = NULL;
+
+/* Loaded through System.load() — by AutoJob, in the rotation's own process,
+ * where there is no Qt to ask — the VM introduces itself here. */
+JNIEXPORT jint JNI_OnLoad(JavaVM *loaded_by, void *reserved)
+{
+    (void)reserved;
+    vm = loaded_by;
+    return JNI_VERSION_1_6;
+}
+
 static JavaVM *find_vm(void)
 {
-    static JavaVM *vm = NULL;
     if (vm)
         return vm;
 
@@ -211,4 +221,85 @@ int rw_install_apk(const char *path, char *error, size_t size)
     (*env)->ReleaseStringUTFChars(env, result, chars);
     (*env)->PopLocalFrame(env, NULL);
     return bad ? -1 : 0;
+}
+
+
+/* One of the app's own classes, through the application's class loader —
+ * FindClass on a thread Java did not start sees only the system's. Leaves
+ * the application in *app. NULL, with `error` filled in, when it fails. */
+static jclass app_class(JNIEnv *env, const char *dotted, jobject *app,
+                        char *error, size_t size)
+{
+    jclass thread = (*env)->FindClass(env, "android/app/ActivityThread");
+    jmethodID current = thread ? (*env)->GetStaticMethodID(env, thread, "currentApplication",
+                                                           "()Landroid/app/Application;") : NULL;
+    *app = current ? (*env)->CallStaticObjectMethod(env, thread, current) : NULL;
+    if (failed(env, error, size) || !*app) {
+        if (!error[0])
+            say(error, size, "no application");
+        return NULL;
+    }
+    jclass context = (*env)->FindClass(env, "android/content/Context");
+    jmethodID get_loader = (*env)->GetMethodID(env, context, "getClassLoader",
+                                               "()Ljava/lang/ClassLoader;");
+    jobject loader = (*env)->CallObjectMethod(env, *app, get_loader);
+    jclass loader_class = (*env)->FindClass(env, "java/lang/ClassLoader");
+    jmethodID load = (*env)->GetMethodID(env, loader_class, "loadClass",
+                                         "(Ljava/lang/String;)Ljava/lang/Class;");
+    jclass found = (jclass)(*env)->CallObjectMethod(env, loader, load,
+                                                    (*env)->NewStringUTF(env, dotted));
+    if (failed(env, error, size) || !found) {
+        if (!error[0])
+            say(error, size, dotted);
+        return NULL;
+    }
+    return found;
+}
+
+/* AutoJob.schedule(application, on): the rotation's JobScheduler job.
+ * 1 when it is scheduled now, 0 when it is not, -1 on an error. */
+int rw_schedule_auto(int on, char *error, size_t size)
+{
+    JNIEnv *env = WebView_AndroidGetJNIEnv();
+    error[0] = 0;
+    if (!env) {
+        say(error, size, "no Java VM");
+        return -1;
+    }
+    if ((*env)->PushLocalFrame(env, 16) != 0)
+        return -1;
+    jobject app = NULL;
+    jclass job = app_class(env, "dev.ivanc.randomwallpaper.AutoJob", &app, error, size);
+    CHECK(job);
+    jmethodID schedule = (*env)->GetStaticMethodID(env, job, "schedule",
+                                                   "(Landroid/content/Context;Z)Z");
+    CHECK(schedule);
+    jboolean now = (*env)->CallStaticBooleanMethod(env, job, schedule, app,
+                                                   on ? JNI_TRUE : JNI_FALSE);
+    CHECK(1);
+    (*env)->PopLocalFrame(env, NULL);
+    return now ? 1 : 0;
+}
+
+/* AutoJob.isScheduled(application): 1, 0, or -1 on an error. */
+int rw_auto_scheduled(char *error, size_t size)
+{
+    JNIEnv *env = WebView_AndroidGetJNIEnv();
+    error[0] = 0;
+    if (!env) {
+        say(error, size, "no Java VM");
+        return -1;
+    }
+    if ((*env)->PushLocalFrame(env, 16) != 0)
+        return -1;
+    jobject app = NULL;
+    jclass job = app_class(env, "dev.ivanc.randomwallpaper.AutoJob", &app, error, size);
+    CHECK(job);
+    jmethodID scheduled = (*env)->GetStaticMethodID(env, job, "isScheduled",
+                                                    "(Landroid/content/Context;)Z");
+    CHECK(scheduled);
+    jboolean yes = (*env)->CallStaticBooleanMethod(env, job, scheduled, app);
+    CHECK(1);
+    (*env)->PopLocalFrame(env, NULL);
+    return yes ? 1 : 0;
 }

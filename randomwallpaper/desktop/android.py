@@ -34,7 +34,34 @@ def _shim():
     for fn in (lib.rw_set_wallpaper, lib.rw_install_apk):
         fn.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t)
         fn.restype = ctypes.c_int
+    lib.rw_schedule_auto.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_size_t)
+    lib.rw_schedule_auto.restype = ctypes.c_int
+    lib.rw_auto_scheduled.argtypes = (ctypes.c_char_p, ctypes.c_size_t)
+    lib.rw_auto_scheduled.restype = ctypes.c_int
     return lib
+
+
+def schedule_auto(on):
+    """The rotation's JobScheduler job (AutoJob.java), on or off. True if it
+    is scheduled now."""
+    import ctypes
+    shim = _shim()
+    if shim is None:
+        raise OSError("this build cannot schedule the rotation")
+    error = ctypes.create_string_buffer(512)
+    result = shim.rw_schedule_auto(1 if on else 0, error, len(error))
+    if result < 0:
+        raise OSError(error.value.decode(errors="replace"))
+    return bool(result)
+
+
+def auto_scheduled():
+    import ctypes
+    shim = _shim()
+    if shim is None:
+        return False
+    error = ctypes.create_string_buffer(512)
+    return shim.rw_auto_scheduled(error, len(error)) == 1
 
 
 def install_apk(path):
