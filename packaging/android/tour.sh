@@ -22,7 +22,7 @@ close_dialogs() { adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_D
 adb install -r -g "$APK"
 # run-as: the app's private directory, which a debug build lets in.
 adb shell run-as "$PKG" sh -c "'mkdir -p files && touch files/tour && rm -rf files/shots'"
-adb shell am start -n "$PKG/org.kivy.android.PythonActivity"
+adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null
 
 seen=""
 for _ in $(seq 1 120); do
@@ -55,7 +55,7 @@ for _ in $(seq 1 120); do
             restarts=$((${restarts:-0} + 1))
             echo "the app is gone — starting it again"
             adb wait-for-device
-            adb shell am start -n "$PKG/org.kivy.android.PythonActivity"
+            adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null
             misses=0
         fi
     fi

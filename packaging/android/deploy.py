@@ -52,6 +52,11 @@ def _adjusted(self, spec_file, pysidedeploy_config):
     # Material's dark theme: dark system bars around a dark window. The
     # default, Theme.NoTitleBar, draws a white navigation bar under it.
     self.set_value("app", "android.apptheme", "@android:style/Theme.Material.NoActionBar")
+    # The activity: PythonActivity, kept alive across the recreate that
+    # setting a wallpaper causes (java/…/WallpaperActivity.java).
+    java = Path(__file__).resolve().parent / "java"
+    self.set_value("app", "android.add_src", str(java))
+    self.set_value("app", "android.entrypoint", "dev.ivanc.randomwallpaper.WallpaperActivity")
     # The SDK packages are installed already; nothing to prompt for.
     self.set_value("app", "android.accept_sdk_license", "True")
     self.set_value("app", "android.skip_update", "True")
