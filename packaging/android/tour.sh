@@ -39,10 +39,25 @@ for _ in $(seq 1 120); do
         echo "got $name"
     done
     case " $seen " in *" done "*) break ;; esac
-    if ! adb shell pidof "$PKG" >/dev/null; then
-        echo "the app is not running"
-        adb exec-out screencap -p > "$OUT/screen-exit.png"
-        break
+    # The emulator itself sometimes restarts under the app; a check can
+    # also just miss. Three misses in a row and it is gone: start it once
+    # more before giving up.
+    if adb shell pidof "$PKG" >/dev/null; then
+        misses=0
+    else
+        misses=$((${misses:-0} + 1))
+        if [ "$misses" -ge 3 ]; then
+            adb exec-out screencap -p > "$OUT/screen-exit-$((${restarts:-0} + 1)).png"
+            if [ "${restarts:-0}" -ge 1 ]; then
+                echo "the app is not running"
+                break
+            fi
+            restarts=$((${restarts:-0} + 1))
+            echo "the app is gone — starting it again"
+            adb wait-for-device
+            adb shell am start -n "$PKG/org.kivy.android.PythonActivity"
+            misses=0
+        fi
     fi
 done
 adb exec-out screencap -p > "$OUT/screen-last.png"
