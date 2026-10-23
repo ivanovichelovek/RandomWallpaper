@@ -44,6 +44,11 @@ def _adjusted(self, spec_file, pysidedeploy_config):
     self.set_value("app", "title", "Random Wallpaper")
     self.set_value("app", "version", os.environ.get("RW_VERSION", "0.0.0"))
     self.set_value("app", "orientation", "portrait")
+    # The bundled fonts, icons and licences: by default buildozer packages
+    # code and a few image types only, and the app fell back to Roboto.
+    exts = self.get_value("app", "source.include_exts") or "py"
+    extra = [e for e in ("ttf", "svg", "txt", "png") if e not in exts.split(",")]
+    self.set_value("app", "source.include_exts", ",".join([exts] + extra))
     # Material's dark theme: dark system bars around a dark window. The
     # default, Theme.NoTitleBar, draws a white navigation bar under it.
     self.set_value("app", "android.apptheme", "@android:style/Theme.Material.NoActionBar")

@@ -225,6 +225,7 @@ QPushButton.accent {{ background: {t['accent']}; color: {t['onAccent']}; font-we
 QPushButton.accent:hover {{ background: {t['accentText']}; }}
 QPushButton.accent:disabled {{ background: {t['well']}; color: {t['faint']}; }}
 QPushButton.danger {{ color: {t['danger']}; }}
+QPushButton.danger:disabled {{ color: {t['faint']}; }}
 QPushButton.round {{ border-radius: 20px; padding: 0; min-width: 40px; max-width: 40px; min-height: 40px; max-height: 40px; font-size: 18px; }}
 QPushButton.flat {{ background: transparent; }}
 QPushButton.flat:hover {{ background: {t['well']}; }}

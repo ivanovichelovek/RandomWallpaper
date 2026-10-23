@@ -12,6 +12,13 @@ adb logcat -c
 adb logcat -v time > "$OUT/logcat.txt" &
 logcat=$!
 
+# A freshly booted emulator's launcher is often still busy, and its "isn't
+# responding" dialog then sits over every screenshot: give it time, and
+# keep system dialogs closed.
+sleep 30
+adb shell settings put global hide_error_dialogs 1 >/dev/null 2>&1
+adb shell settings put secure anr_show_background 0 >/dev/null 2>&1
+close_dialogs() { adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1; }
 adb install -r -g "$APK"
 # run-as: the app's private directory, which a debug build lets in.
 adb shell run-as "$PKG" sh -c "'mkdir -p files && touch files/tour && rm -rf files/shots'"
@@ -26,6 +33,7 @@ for _ in $(seq 1 120); do
         seen="$seen $f"
         [ "$f" = done ] && continue
         name=${f%.png}
+        close_dialogs
         adb exec-out screencap -p > "$OUT/screen-$name.png"
         adb exec-out run-as "$PKG" cat "files/shots/$f" > "$OUT/app-$name.png"
         echo "got $name"
