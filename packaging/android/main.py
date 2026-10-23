@@ -95,7 +95,7 @@ def _dark_system_bars(argb=0xFF0E0F16):
                 print(f"system bars: {exc}", flush=True)
 
     try:
-        activity = autoclass("org.kivy.android.PythonActivity").mActivity
+        activity = autoclass("dev.ivanc.randomwallpaper.WallpaperActivity").mActivity
         _dark_system_bars.paint = Paint()       # kept alive until it has run
         activity.runOnUiThread(_dark_system_bars.paint)
     except Exception as exc:
