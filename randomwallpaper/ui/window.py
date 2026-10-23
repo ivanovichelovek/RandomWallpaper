@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import core
+from ..paths import IS_ANDROID
 from .library_page import LibraryPage
 from .reel_page import ReelPage
 from .settings_page import SettingsPage
@@ -94,7 +95,8 @@ class Reel(QMainWindow):
         # macOS sizes tabs by its own metrics, not the stylesheet's padding,
         # and then elides the labels to fit: "Rand…", "Downloa…".
         self.tabs.tabBar().setElideMode(Qt.ElideNone)
-        self.tabs.tabBar().setExpanding(False)
+        # A phone's tabs share the width between them, as its own apps do.
+        self.tabs.tabBar().setExpanding(IS_ANDROID)
         root.addWidget(self.tabs, 1)
 
         self.reel_page = ReelPage(self)

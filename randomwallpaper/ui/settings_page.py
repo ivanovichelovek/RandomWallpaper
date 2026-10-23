@@ -16,6 +16,8 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__, core, schedule, update
+from ..paths import IS_ANDROID
+from .style import touch_scroll
 
 
 def _eyebrow(text):
@@ -52,6 +54,7 @@ class SettingsPage(QWidget):
         # Everything here wraps; sideways scrolling would only ever mean
         # something failed to.
         scroller.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        touch_scroll(scroller)
         outer.addWidget(scroller)
 
         root = QWidget()
@@ -136,6 +139,10 @@ class SettingsPage(QWidget):
         # ── the calendar rotation ────────────────────────────────────────
         auto_card, auto = _card()
         root_layout.addWidget(auto_card)
+        # Nothing runs the rotation on a phone while the app is closed —
+        # no systemd, launchd or Task Scheduler — so there is nothing here
+        # to switch on.
+        auto_card.setVisible(not IS_ANDROID)
         auto.addWidget(_eyebrow("ROTATION"))
         self._bad_times = None
 
@@ -250,6 +257,7 @@ class SettingsPage(QWidget):
         # ── several monitors ─────────────────────────────────────────────
         screens_card, screens = _card()
         root_layout.addWidget(screens_card)
+        screens_card.setVisible(not IS_ANDROID)     # one screen, always
         screens.addWidget(_eyebrow("SCREENS"))
         modes = QHBoxLayout()
         screens.addLayout(modes)
@@ -315,7 +323,8 @@ class SettingsPage(QWidget):
 
         root_layout.addStretch(1)
         self.refresh_hint()
-        self.check_timer()
+        if not IS_ANDROID:
+            self.check_timer()
 
     @staticmethod
     def _times_ok(value):
@@ -706,6 +715,9 @@ class SettingsPage(QWidget):
                     self._say_update(error)
                 elif not newer:
                     self._say_update(f"{__version__} is the latest version.")
+                elif update.install_kind() == "android":
+                    self._say_update(f"{release['version']} is out — "
+                                     f"{release['url']}")
                 elif update.install_kind() == "source":
                     self._say_update(
                         f"{release['version']} is out — this copy runs from "
@@ -727,7 +739,8 @@ class SettingsPage(QWidget):
         reached — the window has only just opened. A run from source is not
         asked at all: there is nothing here that could update it.
         """
-        if not self.prefs["check_updates"] or update.install_kind() == "source":
+        if (not self.prefs["check_updates"]
+                or update.install_kind() in ("source", "android")):
             return
         win = self.win
 

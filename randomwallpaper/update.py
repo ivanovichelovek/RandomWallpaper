@@ -94,7 +94,10 @@ def linux_package_format(exe=None):
 
 
 def install_kind():
-    """"linux", "windows", "macos" or "source"."""
+    """"linux", "windows", "macos", "android" or "source"."""
+    from .paths import IS_ANDROID
+    if IS_ANDROID:
+        return "android"
     if not getattr(sys, "frozen", False):
         return "source"
     if sys.platform.startswith("linux"):
@@ -130,6 +133,7 @@ def describe_install():
         "linux": "Linux package",
         "windows": "Windows app",
         "macos": "macOS app",
+        "android": "Android app",
         "source": ("standalone build" if getattr(sys, "frozen", False)
                    else "run from source"),
     }[kind]
@@ -300,6 +304,8 @@ def apply(release, progress=None):
     if kind == "linux" and name is None:
         raise UpdateError("no package manager claims this install — update it "
                           "the way it was installed")
+    if kind == "android":
+        raise UpdateError(f"install {release['version']} from {release['url']}")
     if kind == "source":
         raise UpdateError("this copy runs from source — update it the way it "
                           "was installed (git pull, or uv tool upgrade "

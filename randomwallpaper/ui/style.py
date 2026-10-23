@@ -14,6 +14,8 @@ from pathlib import Path
 
 from PySide6.QtGui import QColor, QPalette
 
+from ..paths import IS_ANDROID
+
 BG = "#0E0F16"
 BG_STAGE = "#0A0B10"
 BG_BAR = "#171925"
@@ -355,3 +357,16 @@ def apply(app):
     palette.setColor(QPalette.Disabled, QPalette.Text, QColor(FG_DISABLED))
     palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(FG_DISABLED))
     app.setPalette(palette)
+
+
+def touch_scroll(area):
+    """Let a finger drag `area` (a QAbstractScrollArea) on a touch screen.
+
+    QtWidgets scroll by scroll bar and wheel only; a drag on the content
+    selects or does nothing. QScroller turns a press-and-move into kinetic
+    scrolling, which is the only way to scroll on a phone.
+    """
+    if not IS_ANDROID:
+        return
+    from PySide6.QtWidgets import QScroller
+    QScroller.grabGesture(area.viewport(), QScroller.LeftMouseButtonGesture)

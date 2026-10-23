@@ -12,13 +12,37 @@ from pathlib import Path
 # password-database entry Android does not have.
 os.environ.setdefault("HOME", os.environ.get("ANDROID_PRIVATE", "/data/local/tmp"))
 
-# The interpreter python-for-android builds has no CA bundle of its own:
-# without this every HTTPS request fails its certificate check.
-try:
-    import certifi
-    os.environ.setdefault("SSL_CERT_FILE", certifi.where())
-except ImportError:
-    pass
+
+
+def _trust_android_cas():
+    """Point Python's TLS at certificates it can find.
+
+    The OpenSSL python-for-android builds looks for a CA bundle in a path
+    that does not exist on a phone, so every HTTPS request failed its
+    certificate check. Android keeps its own CAs as hashed PEM files — the
+    layout OpenSSL's capath reads — and certifi is the fallback.
+    """
+    import ssl
+    system = "/system/etc/security/cacerts"
+    cafile = None
+    try:
+        import certifi
+        cafile = certifi.where()
+    except ImportError:
+        pass
+
+    def context(*args, **kwargs):
+        ctx = ssl.create_default_context(*args, **kwargs)
+        if os.path.isdir(system):
+            ctx.load_verify_locations(capath=system)
+        if cafile:
+            ctx.load_verify_locations(cafile=cafile)
+        return ctx
+
+    ssl._create_default_https_context = context
+
+
+_trust_android_cas()
 
 from randomwallpaper import core  # noqa: E402
 from randomwallpaper.paths import CACHE_DIR  # noqa: E402

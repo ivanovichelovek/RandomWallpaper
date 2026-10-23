@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import core
+from .style import touch_scroll
 
 REEL_AHEAD = core.REEL_AHEAD
 MAX_DUPLICATE_RETRIES = core.MAX_DUPLICATE_RETRIES
@@ -174,6 +175,7 @@ class ReelPage(QWidget):
         strip_scroll.setFixedHeight(78)
         strip_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         strip_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        touch_scroll(strip_scroll)
         root.addWidget(strip_scroll)
 
         self.strip_widget = QWidget()

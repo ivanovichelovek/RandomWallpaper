@@ -23,8 +23,8 @@ from PySide6.QtWidgets import (
 )
 
 from .. import core
-from .style import CATEGORY_COLORS, FG_DIM
-from ..paths import CACHE_DIR
+from .style import CATEGORY_COLORS, FG_DIM, touch_scroll
+from ..paths import CACHE_DIR, IS_ANDROID
 
 THUMB_W, THUMB_H = 220, 124
 THUMB_DIR = CACHE_DIR / "thumbs"
@@ -235,6 +235,7 @@ class LibraryPage(QWidget):
         # reach LibraryPage.keyPressEvent), and Qt's own binding for Space in
         # an item view does not double as multi-select in IconMode.
         self.list.installEventFilter(self)
+        touch_scroll(self.list)
         root.addWidget(self.list, 1)
 
         self.empty = QLabel()
@@ -250,10 +251,31 @@ class LibraryPage(QWidget):
 
         bottom = QWidget()
         bottom.setObjectName("bottombar")
-        bl = QHBoxLayout(bottom)
-        bl.setContentsMargins(14, 8, 14, 8)
-        bl.setSpacing(12)
         self.footer.addWidget(bottom)
+        if IS_ANDROID:
+            # Six controls in one row are twice a phone's width: the count
+            # and the filter on top, the four actions two by two below.
+            from PySide6.QtWidgets import QGridLayout
+            stack = QVBoxLayout(bottom)
+            stack.setContentsMargins(12, 8, 12, 8)
+            stack.setSpacing(8)
+            bl = QHBoxLayout()
+            bl.setSpacing(12)
+            stack.addLayout(bl)
+            actions = QGridLayout()
+            actions.setSpacing(8)
+            stack.addLayout(actions)
+        else:
+            bl = QHBoxLayout(bottom)
+            bl.setContentsMargins(14, 8, 14, 8)
+            bl.setSpacing(12)
+            actions = None
+
+        def add_action(button, row, column):
+            if actions is None:
+                bl.addWidget(button)
+            else:
+                actions.addWidget(button, row, column)
 
         self.count = QLabel()
         self.count.setProperty("class", "mono")
@@ -270,24 +292,24 @@ class LibraryPage(QWidget):
         self.delete_btn.setProperty("class", "danger")
         self.delete_btn.setToolTip("Delete the selected wallpapers from disk (Del)")
         self.delete_btn.clicked.connect(self.delete_selected)
-        bl.addWidget(self.delete_btn)
+        add_action(self.delete_btn, 0, 0)
 
         self.pin_btn = QPushButton("Pin to…")
         self.pin_btn.setToolTip("Use the selected wallpapers for a season or holiday")
         self.pin_menu = QMenu(self.pin_btn)
         self.pin_menu.aboutToShow.connect(self.refresh_pin_menu)
         self.pin_btn.setMenu(self.pin_menu)
-        bl.addWidget(self.pin_btn)
+        add_action(self.pin_btn, 0, 1)
 
         self.shuffle_btn = QPushButton("★ Shuffle")
         self.shuffle_btn.clicked.connect(self.toggle_shuffle)
-        bl.addWidget(self.shuffle_btn)
+        add_action(self.shuffle_btn, 1, 0)
 
         self.set_btn = QPushButton("Set as wallpaper")
         self.set_btn.setProperty("class", "accent")
         self.set_btn.setToolTip("Put this one on the desktop now")
         self.set_btn.clicked.connect(self.set_as_wallpaper)
-        bl.addWidget(self.set_btn)
+        add_action(self.set_btn, 1, 1)
         # Each screen its own: the button opens a choice of screen instead.
         self.screen_menu = QMenu(self)
         self.screen_menu.aboutToShow.connect(self.refresh_screen_menu)
