@@ -189,6 +189,9 @@ def tour(win):
     def schedule_rotation():
         from randomwallpaper import schedule
         try:
+            # On, as the switch in Settings would: setting a wallpaper by
+            # hand a step ago switched the rotation off.
+            core.set_auto_enabled(win.prefs, True)
             schedule.ensure_installed()
             print(f"rw-tour: rotation {schedule.status()}", flush=True)
         except Exception as exc:
