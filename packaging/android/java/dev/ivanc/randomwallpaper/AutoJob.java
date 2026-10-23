@@ -70,6 +70,13 @@ public class AutoJob extends JobService {
             }
             jobFinished(params, false);
             // Python is done with this process; the next run gets a new one.
+            // A moment first: jobFinished() reaches the system asynchronously,
+            // and a process gone before it does reads as a job cut short —
+            // run again at once, and again.
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException ignored) {
+            }
             android.os.Process.killProcess(android.os.Process.myPid());
         }).start();
         return true;
