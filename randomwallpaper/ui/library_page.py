@@ -333,6 +333,28 @@ class LibraryPage(QWidget):
 
         self.sync()
 
+    def _fit_tiles(self):
+        """As many columns as fit, each as wide as the room allows — on a
+        phone two tiles fill its width rather than leaving a gap at the
+        right."""
+        # The list's own width less a scroll bar's, whether one shows yet or
+        # not: the grid is laid out before the bar decides to appear.
+        # Qt's icon view wraps a row a little before it is quite full, so
+        # some slack beyond the scroll bar too.
+        room = self.list.width() - self.list.verticalScrollBar().sizeHint().width() - 24
+        if room <= 0:
+            return
+        least = THUMB_W + 2 * TILE_GAP
+        columns = max(2 if IS_ANDROID else 1, room // least)
+        width = room // columns
+        height = round((width - 2 * TILE_GAP) * THUMB_H / THUMB_W) + 2 * TILE_GAP
+        size = QSize(width, height)
+        if self.list.gridSize() != size:
+            self.list.setGridSize(size)
+        for item in self.items.values():
+            if item.sizeHint() != size:
+                item.setSizeHint(size)
+
     # ── what is on disk ─────────────────────────────────────────────────────
     @staticmethod
     def scan():
@@ -408,6 +430,7 @@ class LibraryPage(QWidget):
             else:
                 self.pool.start(_ThumbJob(path, self.thumb_signals))
 
+        self._fit_tiles()
         self.apply_filter()
 
     def _thumb_ready(self, path_str, image):
@@ -471,6 +494,9 @@ class LibraryPage(QWidget):
                 button.setVisible(bool(chosen))
 
     def eventFilter(self, watched, event):
+        if watched is self.list and event.type() == QEvent.Resize:
+            # The list's own new width, which the page's resize precedes.
+            self._fit_tiles()
         if watched is self.list and event.type() == QEvent.KeyPress \
                 and event.key() == Qt.Key_Space and not self.asking():
             item = self.list.currentItem()

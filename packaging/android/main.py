@@ -55,7 +55,8 @@ def _dark_system_bars(argb=0xFF0E0F16):
     """
     try:
         from jnius import PythonJavaClass, autoclass, java_method
-    except ImportError:
+    except Exception as exc:
+        print(f"system bars: no pyjnius: {exc!r}", flush=True)
         return
     color = argb - (1 << 32) if argb >= 1 << 31 else argb
 
@@ -131,6 +132,8 @@ def tour(win):
         ("saved", lambda: win.show_tab(1)),
         # One tile picked: the actions enabled, the selection drawn.
         ("saved-picked", lambda: win.library.list.setCurrentRow(0)),
+        # Put that one up through WallpaperManager, and say how it went.
+        ("set-wallpaper", set_picked),
         ("settings-top", settings_to(0)),
         ("settings-middle", settings_to(0.5)),
         ("settings-bottom", settings_to(1)),
@@ -139,6 +142,15 @@ def tour(win):
         ("other-saved", lambda: win.show_tab(1)),
         ("other-settings", settings_to(0)),
     ]
+
+    def set_picked():
+        from randomwallpaper import desktop
+        chosen = win.library.selected()
+        try:
+            desktop.set_wallpaper(chosen[0])
+            print(f"rw-tour: wallpaper set {chosen[0].name}", flush=True)
+        except Exception as exc:
+            print(f"rw-tour: wallpaper NOT set: {exc!r}", flush=True)
 
     def flip():
         from randomwallpaper.ui import style
