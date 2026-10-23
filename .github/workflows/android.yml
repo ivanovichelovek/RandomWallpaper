@@ -27,6 +27,11 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: "17" }
 
+      - name: What python-for-android builds its recipes with
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q autoconf automake libtool libltdl-dev pkg-config \
+            zlib1g-dev libncurses-dev libffi-dev libssl-dev unzip zip >/dev/null
       - name: SDK packages the deploy tool wants
         run: |
           yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
