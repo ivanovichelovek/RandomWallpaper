@@ -179,7 +179,22 @@ def tour(win):
         ("other-random", lambda: (flip(), win.show_tab(0))),
         ("other-saved", lambda: win.show_tab(1)),
         ("other-settings", settings_to(0)),
+        # The in-app update's last step, on the build itself: Android's
+        # "update this app?" screen should be on top for the screenshot.
+        ("update-installer", lambda: try_installer()),
     ]
+
+    def try_installer():
+        from randomwallpaper.desktop import android
+        apk = PRIVATE / "update-test.apk"
+        if not apk.exists():
+            print("rw-tour: installer NOT tried: no update-test.apk", flush=True)
+            return
+        try:
+            android.install_apk(apk)
+            print("rw-tour: installer started", flush=True)
+        except Exception as exc:
+            print(f"rw-tour: installer NOT started: {exc!r}", flush=True)
 
     def set_picked():
         chosen = win.library.selected() or [p for p, _ in win.library.entries]

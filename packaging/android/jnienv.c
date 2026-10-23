@@ -155,3 +155,60 @@ int rw_set_wallpaper(const char *path, char *error, size_t size)
     (*env)->PopLocalFrame(env, NULL);
     return bad ? -1 : 0;
 }
+
+/* Installer.install(application, path) from Installer.java: hand a
+ * downloaded .apk to Android's installer, which asks the user to confirm.
+ * The class is the app's own, so it is loaded through the application's
+ * class loader — FindClass on a thread Java did not start sees only the
+ * system's. 0 when the session was committed; -1 with `error` filled in. */
+int rw_install_apk(const char *path, char *error, size_t size)
+{
+    JNIEnv *env = WebView_AndroidGetJNIEnv();
+    error[0] = 0;
+    if (!env) {
+        say(error, size, "no Java VM");
+        return -1;
+    }
+    if ((*env)->PushLocalFrame(env, 16) != 0)
+        return -1;
+
+    jclass thread = (*env)->FindClass(env, "android/app/ActivityThread");
+    CHECK(thread);
+    jmethodID current = (*env)->GetStaticMethodID(env, thread, "currentApplication",
+                                                  "()Landroid/app/Application;");
+    CHECK(current);
+    jobject app = (*env)->CallStaticObjectMethod(env, thread, current);
+    CHECK(app);
+
+    jclass context_class = (*env)->FindClass(env, "android/content/Context");
+    CHECK(context_class);
+    jmethodID get_loader = (*env)->GetMethodID(env, context_class, "getClassLoader",
+                                               "()Ljava/lang/ClassLoader;");
+    CHECK(get_loader);
+    jobject loader = (*env)->CallObjectMethod(env, app, get_loader);
+    CHECK(loader);
+    jclass loader_class = (*env)->FindClass(env, "java/lang/ClassLoader");
+    CHECK(loader_class);
+    jmethodID load = (*env)->GetMethodID(env, loader_class, "loadClass",
+                                         "(Ljava/lang/String;)Ljava/lang/Class;");
+    CHECK(load);
+    jstring name = (*env)->NewStringUTF(env, "dev.ivanc.randomwallpaper.Installer");
+    CHECK(name);
+    jclass installer = (jclass)(*env)->CallObjectMethod(env, loader, load, name);
+    CHECK(installer);
+
+    jmethodID install = (*env)->GetStaticMethodID(env, installer, "install",
+        "(Landroid/content/Context;Ljava/lang/String;)Ljava/lang/String;");
+    CHECK(install);
+    jstring jpath = (*env)->NewStringUTF(env, path);
+    CHECK(jpath);
+    jstring result = (jstring)(*env)->CallStaticObjectMethod(env, installer, install, app, jpath);
+    CHECK(result);
+    const char *chars = (*env)->GetStringUTFChars(env, result, NULL);
+    int bad = chars[0] != 0;
+    if (bad)
+        say(error, size, chars);
+    (*env)->ReleaseStringUTFChars(env, result, chars);
+    (*env)->PopLocalFrame(env, NULL);
+    return bad ? -1 : 0;
+}

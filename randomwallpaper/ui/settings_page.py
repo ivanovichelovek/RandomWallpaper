@@ -810,9 +810,6 @@ class SettingsPage(QWidget):
                     self._say_update(error)
                 elif not newer:
                     self._say_update(f"{__version__} is the latest version.")
-                elif update.install_kind() == "android":
-                    self._say_update(f"{release['version']} is out — "
-                                     f"{release['url']}")
                 elif update.install_kind() == "source":
                     self._say_update(
                         f"{release['version']} is out — this copy runs from "
@@ -834,8 +831,7 @@ class SettingsPage(QWidget):
         reached — the window has only just opened. A run from source is not
         asked at all: there is nothing here that could update it.
         """
-        if (not self.prefs["check_updates"]
-                or update.install_kind() in ("source", "android")):
+        if not self.prefs["check_updates"] or update.install_kind() == "source":
             return
         win = self.win
 
@@ -894,7 +890,12 @@ class SettingsPage(QWidget):
 
             def done():
                 self._say_update(message)
-                if ok:
+                if ok and IS_ANDROID:
+                    # Android's installer asks the user, and answers this
+                    # app: it has to still be running to show that screen.
+                    # Installing replaces it when the user confirms.
+                    self.update_button.setEnabled(True)
+                elif ok:
                     # The new version starts once this one is gone: the
                     # installer, or the helper apply() left, waits for it.
                     win.close()

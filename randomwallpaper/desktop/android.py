@@ -31,9 +31,23 @@ def _shim():
         lib = ctypes.CDLL(str(Path(root) / "libjnienv.so"))
     except OSError:
         return None
-    lib.rw_set_wallpaper.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t)
-    lib.rw_set_wallpaper.restype = ctypes.c_int
+    for fn in (lib.rw_set_wallpaper, lib.rw_install_apk):
+        fn.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t)
+        fn.restype = ctypes.c_int
     return lib
+
+
+def install_apk(path):
+    """Hand a downloaded .apk to Android's installer (Installer.java), which
+    asks the user to confirm. Raises WallpaperError's parent, OSError, if it
+    could not even be handed over."""
+    import ctypes
+    shim = _shim()
+    if shim is None:
+        raise OSError("this build cannot install updates itself")
+    error = ctypes.create_string_buffer(512)
+    if shim.rw_install_apk(str(Path(path)).encode(), error, len(error)) != 0:
+        raise OSError(error.value.decode(errors="replace") or "the installer refused it")
 
 
 def set_wallpaper(path, command=None):

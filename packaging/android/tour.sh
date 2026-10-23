@@ -22,6 +22,9 @@ close_dialogs() { adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_D
 adb install -r -g "$APK"
 # run-as: the app's private directory, which a debug build lets in.
 adb shell run-as "$PKG" sh -c "'mkdir -p files && touch files/tour && rm -rf files/shots'"
+# The .apk itself, for the tour's last step to hand to the installer.
+adb push "$APK" /data/local/tmp/rw-update.apk >/dev/null
+adb shell run-as "$PKG" cp /data/local/tmp/rw-update.apk files/update-test.apk
 adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null
 
 seen=""

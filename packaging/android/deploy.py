@@ -22,7 +22,8 @@ from deploy_lib.android import buildozer  # noqa: E402
 
 # pyjnius: WallpaperManager. The rest are pure Python, pip-installed by p4a.
 EXTRA_REQUIREMENTS = ["pyjnius", "certifi", "platformdirs"]
-EXTRA_PERMISSIONS = ["INTERNET", "SET_WALLPAPER"]
+# REQUEST_INSTALL_PACKAGES: an update hands its .apk to the installer.
+EXTRA_PERMISSIONS = ["INTERNET", "SET_WALLPAPER", "REQUEST_INSTALL_PACKAGES"]
 
 _written = buildozer.BuildozerConfig.__init__
 
