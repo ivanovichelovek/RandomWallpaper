@@ -27,6 +27,16 @@ cp -r randomwallpaper "$stage/"
 find "$stage" -name __pycache__ -prune -exec rm -rf {} +
 cp packaging/macos/icon.iconset/icon_512x512.png "$stage/icon.png" 2>/dev/null || true
 
+# The JNIEnv getter pyjnius needs under the Qt bootstrap (see jnienv.c),
+# built for the same ABI as the app.
+case "${ARCH:-x86_64}" in
+    x86_64) triple=x86_64-linux-android ;;
+    aarch64) triple=aarch64-linux-android ;;
+esac
+"$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/${triple}28-clang" \
+    -shared -fPIC -O2 -Wl,-z,max-page-size=16384 \
+    -o "$stage/libjnienv.so" packaging/android/jnienv.c -ldl
+
 cd "$stage"
 RW_VERSION=$VERSION "$PY" "$repo/packaging/android/deploy.py" \
     --name RandomWallpaper \

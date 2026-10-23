@@ -45,6 +45,21 @@ def _trust_android_cas():
 _trust_android_cas()
 
 
+def _load_jni_shim():
+    """Make pyjnius loadable: its jnius.so wants WebView_AndroidGetJNIEnv,
+    which the Qt bootstrap does not provide. libjnienv.so (jnienv.c) does,
+    and loaded RTLD_GLOBAL it is there when jnius.so is resolved."""
+    import ctypes
+    shim = Path(__file__).resolve().with_name("libjnienv.so")
+    try:
+        ctypes.CDLL(str(shim), mode=ctypes.RTLD_GLOBAL)
+    except OSError as exc:
+        print(f"jni shim: {exc}", flush=True)
+
+
+_load_jni_shim()
+
+
 def _dark_system_bars(argb=0xFF0E0F16):
     """Paint the status and navigation bars the window's own colour.
 
@@ -145,7 +160,10 @@ def tour(win):
 
     def set_picked():
         from randomwallpaper import desktop
-        chosen = win.library.selected()
+        chosen = win.library.selected() or [p for p, _ in win.library.entries]
+        if not chosen:
+            print("rw-tour: wallpaper NOT set: nothing saved", flush=True)
+            return
         try:
             desktop.set_wallpaper(chosen[0])
             print(f"rw-tour: wallpaper set {chosen[0].name}", flush=True)
