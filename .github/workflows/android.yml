@@ -60,6 +60,7 @@ jobs:
 
       - name: Icons
         run: |
+          sudo apt-get install -y -q libegl1 libgl1 libxkbcommon0 >/dev/null
           ~/deploy-venv/bin/pip install -q platformdirs
           QT_QPA_PLATFORM=offscreen "$PYTHON" packaging/make_icons.py
 
