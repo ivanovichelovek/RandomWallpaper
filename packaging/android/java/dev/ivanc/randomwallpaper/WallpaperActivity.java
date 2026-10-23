@@ -7,7 +7,6 @@ import java.lang.invoke.MethodHandles;
 import java.lang.invoke.MethodType;
 
 import org.kivy.android.PythonActivity;
-import org.qtproject.qt.android.bindings.QtActivity;
 
 /**
  * python-for-android's activity, surviving a recreate.
@@ -25,9 +24,14 @@ public class WallpaperActivity extends PythonActivity {
     public void onDestroy() {
         if (isChangingConfigurations()) {
             try {
-                // super.super.onDestroy(): QtActivity's, without PythonActivity's kill.
+                // super.super.onDestroy(): Qt's, without PythonActivity's kill.
+                // The nearest class above PythonActivity that declares it —
+                // QtActivity inherits it from QtActivityBase.
+                Class<?> owner = PythonActivity.class.getSuperclass();
+                while (owner != null && !declaresOnDestroy(owner))
+                    owner = owner.getSuperclass();
                 MethodHandle qt = MethodHandles.lookup().findSpecial(
-                        QtActivity.class, "onDestroy",
+                        owner, "onDestroy",
                         MethodType.methodType(void.class), WallpaperActivity.class);
                 qt.invoke(this);
                 return;
@@ -36,5 +40,14 @@ public class WallpaperActivity extends PythonActivity {
             }
         }
         super.onDestroy();
+    }
+
+    private static boolean declaresOnDestroy(Class<?> c) {
+        try {
+            c.getDeclaredMethod("onDestroy");
+            return true;
+        } catch (NoSuchMethodException e) {
+            return false;
+        }
     }
 }
