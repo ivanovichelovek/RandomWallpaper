@@ -11,7 +11,6 @@ import android.util.Log;
 import java.io.File;
 
 import org.kivy.android.PythonService;
-import org.kivy.android.PythonUtil;
 
 /**
  * The rotation while the app is closed: what systemd, launchd and Task
@@ -52,12 +51,11 @@ public class AutoJob extends JobService {
             try {
                 File filesDir = getFilesDir();
                 String root = filesDir.getAbsolutePath() + "/app";
-                File appRoot = new File(root);
                 // The app's files are unpacked by its activity; a job that
                 // comes first (after an update, before the app was opened)
                 // has nothing to run yet.
                 if (new File(root, "auto.py").exists()) {
-                    PythonUtil.loadLibraries(appRoot, new File(getApplicationInfo().nativeLibraryDir));
+                    loadPython(new File(getApplicationInfo().nativeLibraryDir));
                     // The JNI helper, through System.load so it learns the Java
                     // VM in JNI_OnLoad — there is no Qt in this process to ask.
                     File helper = new File(root, "libjnienv.so");
@@ -75,6 +73,26 @@ public class AutoJob extends JobService {
             android.os.Process.killProcess(android.os.Process.myPid());
         }).start();
         return true;
+    }
+
+    /**
+     * What PythonUtil.loadLibraries() does, for the Qt bootstrap's names: it
+     * looks for "libmain.so", and this build's is libmain_<abi>.so. The C++
+     * runtime and OpenSSL first, then libpython, then main.
+     */
+    private static void loadPython(File libsDir) {
+        File[] files = libsDir.listFiles();
+        if (files == null)
+            throw new RuntimeException("no native libraries in " + libsDir);
+        String[] order = {"libc++_shared", "libffi", "libsqlite3", "libcrypto", "libssl",
+                          "libpython3", "libmain_"};
+        for (String prefix : order) {
+            for (File f : files) {
+                String name = f.getName();
+                if (name.startsWith(prefix) && name.endsWith(".so"))
+                    System.load(f.getAbsolutePath());
+            }
+        }
     }
 
     @Override
