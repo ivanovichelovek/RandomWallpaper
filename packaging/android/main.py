@@ -65,9 +65,18 @@ def _dark_system_bars(argb=0xFF0E0F16):
 
         @java_method("()V")
         def run(self):
-            window = activity.getWindow()
-            window.setStatusBarColor(color)
-            window.setNavigationBarColor(color)
+            try:
+                window = activity.getWindow()
+                window.setStatusBarColor(color)
+                window.setNavigationBarColor(color)
+                # Under a transparent bar what shows is the decor view's
+                # own background, which the light default theme left white.
+                window.getDecorView().setBackgroundColor(color)
+                if hasattr(window, "setNavigationBarContrastEnforced"):
+                    window.setNavigationBarContrastEnforced(False)
+                print("system bars: painted", flush=True)
+            except Exception as exc:
+                print(f"system bars: {exc}", flush=True)
 
     try:
         activity = autoclass("org.kivy.android.PythonActivity").mActivity
@@ -155,7 +164,11 @@ def main():
     from randomwallpaper.ui.app import run_app
 
     def shown(win):
+        from PySide6.QtCore import QTimer
         _dark_system_bars()
+        # Again once Qt has finished setting its window up, which may
+        # repaint the bars after the first call.
+        QTimer.singleShot(1500, _dark_system_bars)
         if touring:
             tour(win)
     return run_app(prefs, None, on_shown=shown)
