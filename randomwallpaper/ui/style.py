@@ -379,6 +379,18 @@ class Theme:
             return
         self.applied = key
         self.t = tokens(seed, dark=key[2])
+        if IS_ANDROID:
+            # On Android Qt paints the status and navigation bars from the
+            # colour scheme it is told the app uses; left to follow the
+            # system, a dark window under a light system got white bars.
+            mode = (self.prefs or {}).get("appearance", "system")
+            try:
+                hints = self.app.styleHints()
+                hints.setColorScheme(Qt.ColorScheme.Unknown if mode == "system"
+                                     else Qt.ColorScheme.Dark if key[2]
+                                     else Qt.ColorScheme.Light)
+            except AttributeError:
+                pass
         self.app.setPalette(build_palette(self.t))
         self.app.setStyleSheet(build_qss(self.t, _fonts["sans"], _fonts["mono"]))
         for listener in list(self.listeners):

@@ -42,6 +42,8 @@ _ICONS = {
               '<rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
     "Settings": ('<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/>'
                  '<circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>'),
+    "prev": '<path d="M15 5l-7 7 7 7"/>',
+    "next": '<path d="M9 5l7 7-7 7"/>',
 }
 
 
@@ -154,6 +156,7 @@ class Reel(QMainWindow):
         self.settings = SettingsPage(self, prefs)
         self.settings.changed.connect(self.filters_changed)
         self.pages.addWidget(self.settings)
+        self._paint_icons(style.theme.t)
 
         # ── toast: floats over the page, near the bottom ────────────────
         self.toast = QLabel(central)
@@ -171,6 +174,12 @@ class Reel(QMainWindow):
     def _paint_icons(self, t):
         for name, button in zip(SECTIONS, self.nav_buttons):
             button.setIcon(_svg_icon(name, t["dim"], t["accentText"]))
+        page = getattr(self, "reel_page", None)
+        if page is not None:
+            for name, button in (("prev", page.prev_btn), ("next", page.next_btn)):
+                button.setText("")
+                button.setIcon(_svg_icon(name, t["fg"], t["fg"], size=18))
+                button.setIconSize(QSize(18, 18))
 
     # ── cross-thread hand-off ───────────────────────────────────────────
     @Slot(object)

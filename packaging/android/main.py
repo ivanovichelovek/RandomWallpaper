@@ -128,13 +128,23 @@ def tour(win):
 
     steps = [
         ("random", lambda: win.show_tab(0)),
-        ("downloaded", lambda: win.show_tab(1)),
+        ("saved", lambda: win.show_tab(1)),
         # One tile picked: the actions enabled, the selection drawn.
-        ("downloaded-picked", lambda: win.library.list.setCurrentRow(0)),
+        ("saved-picked", lambda: win.library.list.setCurrentRow(0)),
         ("settings-top", settings_to(0)),
         ("settings-middle", settings_to(0.5)),
         ("settings-bottom", settings_to(1)),
+        # The same in the other appearance.
+        ("other-random", lambda: (flip(), win.show_tab(0))),
+        ("other-saved", lambda: win.show_tab(1)),
+        ("other-settings", settings_to(0)),
     ]
+
+    def flip():
+        from randomwallpaper.ui import style
+        dark = style.theme.dark()
+        win.prefs["appearance"] = "light" if dark else "dark"
+        style.theme.apply(force=True)
 
     def step(i):
         if i == len(steps):
@@ -175,4 +185,12 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except BaseException:
+        # stderr does not reach logcat; stdout does.
+        import traceback
+        print("rw-crash:\n" + traceback.format_exc(), flush=True)
+        raise
