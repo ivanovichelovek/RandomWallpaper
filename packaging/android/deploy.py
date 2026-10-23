@@ -44,6 +44,9 @@ def _adjusted(self, spec_file, pysidedeploy_config):
     self.set_value("app", "title", "Random Wallpaper")
     self.set_value("app", "version", os.environ.get("RW_VERSION", "0.0.0"))
     self.set_value("app", "orientation", "portrait")
+    # The SDK packages are installed already; nothing to prompt for.
+    self.set_value("app", "android.accept_sdk_license", "True")
+    self.set_value("app", "android.skip_update", "True")
     if Path("icon.png").exists():
         self.set_value("app", "icon.filename", str(Path("icon.png").resolve()))
     self.update_config()
