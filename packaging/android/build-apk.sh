@@ -34,7 +34,8 @@ case "${ARCH:-x86_64}" in
     aarch64) triple=aarch64-linux-android ;;
 esac
 "$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/${triple}28-clang" \
-    -shared -fPIC -O2 -Wl,-z,max-page-size=16384 \
+    -shared -fPIC -O2 -Wl,-z,max-page-size=16384 -Wl,-z,global \
+    -Wl,-soname,libjnienv.so \
     -o "$stage/libjnienv.so" packaging/android/jnienv.c -ldl
 
 cd "$stage"

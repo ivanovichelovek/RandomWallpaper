@@ -1,6 +1,6 @@
 """Setting the wallpaper on Android, through WallpaperManager.
 
-Reached through pyjnius. The context is the application's own, from
+Reached through libjnienv.so's plain JNI when the app has it, else pyjnius. The context is the application's own, from
 ActivityThread rather than the activity class: pyjnius looks classes up with
 the system class loader on any thread but the main one, and the app's own
 classes are not there — a set from a worker thread could not even find them.
@@ -21,7 +21,30 @@ def _manager():
     return autoclass, autoclass("android.app.WallpaperManager").getInstance(app)
 
 
+def _shim():
+    """libjnienv.so beside main.py (packaging/android/jnienv.c): sets the
+    wallpaper with plain JNI, no pyjnius needed."""
+    import ctypes
+    import os
+    root = os.environ.get("ANDROID_ARGUMENT") or os.environ.get("ANDROID_APP_PATH") or ""
+    try:
+        lib = ctypes.CDLL(str(Path(root) / "libjnienv.so"))
+    except OSError:
+        return None
+    lib.rw_set_wallpaper.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_size_t)
+    lib.rw_set_wallpaper.restype = ctypes.c_int
+    return lib
+
+
 def set_wallpaper(path, command=None):
+    shim = _shim()
+    if shim is not None:
+        import ctypes
+        error = ctypes.create_string_buffer(512)
+        if shim.rw_set_wallpaper(str(Path(path)).encode(), error, len(error)) != 0:
+            raise WallpaperError(f"WallpaperManager refused it: "
+                                 f"{error.value.decode(errors='replace')}")
+        return
     autoclass, manager = _manager()
     # A stream rather than a Bitmap: WallpaperManager decodes and scales it
     # itself, without a 4K image held whole in this process's heap.

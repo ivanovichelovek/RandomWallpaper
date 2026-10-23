@@ -7,9 +7,13 @@
  * so jnius.so failed to load ("cannot locate symbol") and nothing that goes
  * through Java — setting the wallpaper with WallpaperManager — could work.
  *
- * main.py loads this library RTLD_GLOBAL before jnius is first imported. The
- * Java VM comes from Qt (QtAndroidPrivate::javaVM()), or failing that from
- * JNI_GetCreatedJavaVMs; the calling thread is attached if it is not yet.
+ * main.py loads this library RTLD_GLOBAL (and it is linked -z global) before
+ * jnius is first imported. The Java VM comes from Qt
+ * (QtAndroidPrivate::javaVM()), or failing that from JNI_GetCreatedJavaVMs;
+ * the calling thread is attached if it is not yet.
+ *
+ * It also sets the wallpaper itself, with plain JNI, for when pyjnius still
+ * cannot be had: rw_set_wallpaper(), called through ctypes.
  */
 #include <dlfcn.h>
 #include <jni.h>
@@ -58,4 +62,96 @@ JNIEnv *WebView_AndroidGetJNIEnv(void)
         /* void *: the JDK and the NDK jni.h disagree on this argument type. */
         (*vm)->AttachCurrentThread(vm, (void *)&env, NULL);
     return env;
+}
+
+
+static void say(char *error, size_t size, const char *message)
+{
+    size_t i = 0;
+    for (; message[i] && i + 1 < size; i++)
+        error[i] = message[i];
+    error[i] = 0;
+}
+
+/* Fill `error` with the pending Java exception's message, clear it, and say
+ * whether there was one. */
+static int failed(JNIEnv *env, char *error, size_t size)
+{
+    if (!(*env)->ExceptionCheck(env))
+        return 0;
+    jthrowable exc = (*env)->ExceptionOccurred(env);
+    (*env)->ExceptionClear(env);
+    error[0] = 0;
+    jclass throwable = (*env)->FindClass(env, "java/lang/Throwable");
+    jmethodID to_string = throwable
+        ? (*env)->GetMethodID(env, throwable, "toString", "()Ljava/lang/String;") : NULL;
+    jstring text = to_string ? (jstring)(*env)->CallObjectMethod(env, exc, to_string) : NULL;
+    if (text) {
+        const char *chars = (*env)->GetStringUTFChars(env, text, NULL);
+        say(error, size, chars);
+        (*env)->ReleaseStringUTFChars(env, text, chars);
+    }
+    (*env)->ExceptionClear(env);
+    return 1;
+}
+
+#define CHECK(what) do { \
+        if (failed(env, error, size) || !(what)) { \
+            if (!error[0]) \
+                say(error, size, "no " #what); \
+            (*env)->PopLocalFrame(env, NULL); \
+            return -1; \
+        } \
+    } while (0)
+
+/* WallpaperManager.getInstance(app).setStream(new FileInputStream(path)).
+ * 0 when it worked; -1 with `error` filled in when it did not. */
+int rw_set_wallpaper(const char *path, char *error, size_t size)
+{
+    JNIEnv *env = WebView_AndroidGetJNIEnv();
+    error[0] = 0;
+    if (!env) {
+        say(error, size, "no Java VM");
+        return -1;
+    }
+    if ((*env)->PushLocalFrame(env, 16) != 0)
+        return -1;
+
+    jclass thread = (*env)->FindClass(env, "android/app/ActivityThread");
+    CHECK(thread);
+    jmethodID current = (*env)->GetStaticMethodID(env, thread, "currentApplication",
+                                                  "()Landroid/app/Application;");
+    CHECK(current);
+    jobject app = (*env)->CallStaticObjectMethod(env, thread, current);
+    CHECK(app);
+
+    jclass manager_class = (*env)->FindClass(env, "android/app/WallpaperManager");
+    CHECK(manager_class);
+    jmethodID get_instance = (*env)->GetStaticMethodID(env, manager_class, "getInstance",
+        "(Landroid/content/Context;)Landroid/app/WallpaperManager;");
+    CHECK(get_instance);
+    jobject manager = (*env)->CallStaticObjectMethod(env, manager_class, get_instance, app);
+    CHECK(manager);
+
+    jclass stream_class = (*env)->FindClass(env, "java/io/FileInputStream");
+    CHECK(stream_class);
+    jmethodID open = (*env)->GetMethodID(env, stream_class, "<init>", "(Ljava/lang/String;)V");
+    CHECK(open);
+    jstring jpath = (*env)->NewStringUTF(env, path);
+    CHECK(jpath);
+    jobject stream = (*env)->NewObject(env, stream_class, open, jpath);
+    CHECK(stream);
+
+    jmethodID set_stream = (*env)->GetMethodID(env, manager_class, "setStream",
+                                               "(Ljava/io/InputStream;)V");
+    CHECK(set_stream);
+    (*env)->CallVoidMethod(env, manager, set_stream, stream);
+    int bad = failed(env, error, size);
+
+    jmethodID close = (*env)->GetMethodID(env, stream_class, "close", "()V");
+    if (close)
+        (*env)->CallVoidMethod(env, stream, close);
+    (*env)->ExceptionClear(env);
+    (*env)->PopLocalFrame(env, NULL);
+    return bad ? -1 : 0;
 }
