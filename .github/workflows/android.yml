@@ -38,7 +38,9 @@ jobs:
       - name: Host tools, outside the project
         run: |
           python -m venv ~/deploy-venv
-          ~/deploy-venv/bin/pip install -q "PySide6==$PYSIDE_VERSION" buildozer cython
+          # The deploy tool's own requirements-android.txt, which pip does not install.
+          ~/deploy-venv/bin/pip install -q "PySide6==$PYSIDE_VERSION" buildozer cython \
+            jinja2 pkginfo tqdm "packaging==24.1"
           echo "PYTHON=$HOME/deploy-venv/bin/python" >> "$GITHUB_ENV"
 
       - name: Android wheels

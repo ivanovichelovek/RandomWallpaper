@@ -15,7 +15,7 @@ VERSION=$("$PY" -c 'import randomwallpaper; print(randomwallpaper.__version__)')
 pyside=$(find "$WHEELS" -maxdepth 1 -iname 'pyside6-*android*.whl' | head -n1)
 shiboken=$(find "$WHEELS" -maxdepth 1 -iname 'shiboken6-*android*.whl' | head -n1)
 [ -n "$pyside" ] && [ -n "$shiboken" ] || { echo "no Android wheels in $WHEELS" >&2; exit 1; }
-echo "PySide6 $VERSION build: $pyside, $shiboken"
+echo "Random Wallpaper $VERSION with $(basename "$pyside")"
 
 # The deploy tool packages everything under the directory main.py is in, so
 # that directory holds the app and nothing else.
