@@ -76,9 +76,13 @@ mkdir -p "$repo/dist/android"
 NAME=$("$PY" -c "from randomwallpaper.update import asset_name
 print(asset_name('$VERSION', kind='android', machine='${ARCH:-x86_64}'))")
 if [ "${RW_BUILD_MODE:-debug}" = release ]; then
-    # Signed with the one key every release is signed with, or Android will
-    # not install the next version over this one. KEYSTORE is the file,
-    # KEYSTORE_PASSWORD and KEY_ALIAS its password and key.
+    # A release is the debug build, re-signed with the one key every release
+    # is signed with — or Android will not install the next version over
+    # this one. Not buildozer's own release mode: its build has Qt load the
+    # PySide modules as native libraries from a directory the installer does
+    # not put them in, and the app exits at once. The cost is a debuggable
+    # app. KEYSTORE is the key file, KEYSTORE_PASSWORD and KEY_ALIAS its
+    # password and key.
     tools=$(ls -d "$ANDROID_SDK"/build-tools/* | sort -V | tail -n1)
     "$tools/zipalign" -p -f 4 "$apk" "$stage/aligned.apk"
     "$tools/apksigner" sign --ks "$KEYSTORE" --ks-pass env:KEYSTORE_PASSWORD \
