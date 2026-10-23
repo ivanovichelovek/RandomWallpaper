@@ -1,18 +1,20 @@
-"""The main window: three tabs (Random / Downloaded / Settings), a toast, and
-the keyboard shortcuts shared across all of them.
+"""The main window: a rail of three sections (Random / Saved / Settings) —
+a bottom bar on a phone — a toast, and the keyboard shortcuts shared across
+all of them. The operating system draws the title bar; nothing here does.
 """
 import os
 import subprocess
 
-from PySide6.QtCore import QEvent, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import QByteArray, QEvent, QSize, Qt, QTimer, Signal, Slot
+from PySide6.QtGui import QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractButton, QApplication, QComboBox, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QTabWidget, QVBoxLayout, QWidget,
+    QAbstractButton, QApplication, QButtonGroup, QComboBox, QHBoxLayout,
+    QLabel, QMainWindow, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
 )
 
 from .. import core
 from ..paths import IS_ANDROID
+from . import style
 from .library_page import LibraryPage
 from .reel_page import ReelPage
 from .settings_page import SettingsPage
@@ -31,13 +33,43 @@ _CYRILLIC_TWINS = {
     Qt.Key_A: "Ф",   # Ф
 }
 
+# The three sections: their names, and their icons as stroke SVG drawn in
+# whatever colour the theme gives the button.
+SECTIONS = ["Random", "Saved", "Settings"]
+_ICONS = {
+    "Random": '<path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/>',
+    "Saved": ('<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/>'
+              '<rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'),
+    "Settings": ('<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12"/><circle cx="16" cy="6" r="2"/>'
+                 '<circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>'),
+}
+
+
+def _svg_icon(name, off, on, size=22):
+    from PySide6.QtSvg import QSvgRenderer
+    icon = QIcon()
+    for color, state in ((off, QIcon.Off), (on, QIcon.On)):
+        svg = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" '
+               f'stroke="{color}" stroke-width="1.8" stroke-linecap="round" '
+               f'stroke-linejoin="round">{_ICONS[name]}</svg>')
+        renderer = QSvgRenderer(QByteArray(svg.encode()))
+        for scale in (1, 2, 3):
+            pix = QPixmap(size * scale, size * scale)
+            pix.fill(Qt.transparent)
+            painter = QPainter(pix)
+            renderer.render(painter)
+            painter.end()
+            pix.setDevicePixelRatio(scale)
+            icon.addPixmap(pix, QIcon.Normal, state)
+    return icon
+
 
 class Reel(QMainWindow):
     _posted = Signal(object)
 
     def __init__(self, app, prefs):
         super().__init__()
-        # Connected before any page exists: the Settings tab starts a worker
+        # Connected before any page exists: the Settings page starts a worker
         # in its constructor, and that worker's answer comes back this way.
         # A bound method rather than a lambda, so the window is the receiver
         # and the call is queued onto its thread from whichever one emitted.
@@ -46,8 +78,8 @@ class Reel(QMainWindow):
         self.prefs = prefs
         self.setWindowTitle("Random Wallpaper")
         # The size it was designed at, but never more than the screen can
-        # show: 1000×760 on a 1024×768 laptop puts the reel strip under the
-        # taskbar and the frame counter past the right edge.
+        # show: 1000×760 on a 1024×768 laptop puts the bottom of the page
+        # under the taskbar.
         from PySide6.QtGui import QGuiApplication
         screen = QGuiApplication.primaryScreen()
         room = screen.availableGeometry() if screen else None
@@ -58,75 +90,87 @@ class Reel(QMainWindow):
         self.resize(width, height)
 
         central = QWidget()
-        central.setObjectName("reelRoot")
+        central.setObjectName("root")
         self.setCentralWidget(central)
-        root = QVBoxLayout(central)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        outer.addLayout(body, 1)
 
-        # ── top bar ──────────────────────────────────────────────────────
-        top = QWidget()
-        top.setObjectName("topbar")
-        top_layout = QHBoxLayout(top)
-        top_layout.setContentsMargins(14, 8, 14, 8)
-        top_layout.setSpacing(12)
-        root.addWidget(top)
-
-        wordmark = QLabel("RANDOM WALLPAPER")
-        wordmark.setObjectName("wordmark")
-        top_layout.addWidget(wordmark)
-
-        self.filter_summary = QLabel()
-        self.filter_summary.setStyleSheet("color:#8B90A8; font-family:monospace; font-size:11px;")
-        top_layout.addWidget(self.filter_summary, 1)
-
-        self.position = QLabel()
-        self.position.setStyleSheet("color:#8B90A8; font-family:monospace; font-size:11px;")
-        top_layout.addWidget(self.position)
-
-        # ── tabs ─────────────────────────────────────────────────────────
-        self.tabs = QTabWidget()
-        self.tabs.setDocumentMode(True)
-        # documentMode draws a base line under the tabs in the palette's
-        # light colour — pure white under Fusion, a hairline across the top
-        # of a dark window. The top bar already draws the border that belongs
-        # there.
-        self.tabs.tabBar().setDrawBase(False)
-        # macOS sizes tabs by its own metrics, not the stylesheet's padding,
-        # and then elides the labels to fit: "Rand…", "Downloa…".
-        self.tabs.tabBar().setElideMode(Qt.ElideNone)
-        # A phone's tabs share the width between them, as its own apps do.
-        self.tabs.tabBar().setExpanding(IS_ANDROID)
-        root.addWidget(self.tabs, 1)
+        self.pages = QStackedWidget()
+        self.nav_group = QButtonGroup(self)
+        self.nav_group.setExclusive(True)
+        self.nav_buttons = []
+        nav = QWidget()
+        if IS_ANDROID:
+            # A phone: the sections along the bottom, under the thumb.
+            nav.setObjectName("bottomNav")
+            nav_layout = QHBoxLayout(nav)
+            nav_layout.setContentsMargins(8, 6, 8, 10)
+            nav_layout.setSpacing(0)
+        else:
+            nav.setObjectName("rail")
+            nav.setFixedWidth(68)
+            nav_layout = QVBoxLayout(nav)
+            nav_layout.setContentsMargins(10, 14, 10, 14)
+            nav_layout.setSpacing(6)
+        for i, name in enumerate(SECTIONS):
+            button = QToolButton()
+            button.setCheckable(True)
+            button.setCursor(Qt.PointingHandCursor)
+            button.setToolTip(f"{name}  ({i + 1})")
+            if IS_ANDROID:
+                button.setProperty("class", "navBottom")
+                button.setText(name)
+                button.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+                button.setIconSize(QSize(22, 22))
+                button.setMinimumHeight(56)
+                nav_layout.addWidget(button, 1)
+            else:
+                button.setProperty("class", "nav")
+                button.setFixedSize(48, 48)
+                button.setIconSize(QSize(22, 22))
+                nav_layout.addWidget(button, 0, Qt.AlignHCenter)
+            button.clicked.connect(lambda _=False, i=i: self.show_tab(i))
+            self.nav_group.addButton(button, i)
+            self.nav_buttons.append(button)
+        if IS_ANDROID:
+            body.addWidget(self.pages, 1)
+            outer.addWidget(nav)
+        else:
+            nav_layout.addStretch(1)
+            body.addWidget(nav)
+            body.addWidget(self.pages, 1)
+        self._paint_icons(style.theme.t)
+        style.theme.listeners.append(self._paint_icons)
 
         self.reel_page = ReelPage(self)
-        self.tabs.addTab(self.reel_page, "Random")
+        self.pages.addWidget(self.reel_page)
         self.library = LibraryPage(self)
-        self.tabs.addTab(self.library, "Downloaded")
+        self.pages.addWidget(self.library)
         self.settings = SettingsPage(self, prefs)
         self.settings.changed.connect(self.filters_changed)
-        self.tabs.addTab(self.settings, "Settings")
-        self.tabs.currentChanged.connect(self.on_tab_changed)
+        self.pages.addWidget(self.settings)
 
-        # ── toast ────────────────────────────────────────────────────────
-        self.toast = QLabel()
+        # ── toast: floats over the page, near the bottom ────────────────
+        self.toast = QLabel(central)
         self.toast.setObjectName("toast")
         self.toast.setAlignment(Qt.AlignCenter)
+        self.toast.setWordWrap(True)
         self.toast.hide()
-        self._toast_container = QWidget()
-        tc_layout = QHBoxLayout(self._toast_container)
-        tc_layout.setContentsMargins(0, 0, 0, 10)
-        tc_layout.addStretch(1)
-        tc_layout.addWidget(self.toast)
-        tc_layout.addStretch(1)
-        root.addWidget(self._toast_container)
         self.toast_timer = QTimer(self)
         self.toast_timer.setSingleShot(True)
         self.toast_timer.timeout.connect(self.hide_toast)
 
         self._install_shortcuts()
-        self.refresh_summary()
-        self.on_tab_changed(0)
+        self.show_tab(0)
+
+    def _paint_icons(self, t):
+        for name, button in zip(SECTIONS, self.nav_buttons):
+            button.setIcon(_svg_icon(name, t["dim"], t["accentText"]))
 
     # ── cross-thread hand-off ───────────────────────────────────────────
     @Slot(object)
@@ -198,49 +242,43 @@ class Reel(QMainWindow):
 
     # ── chrome ───────────────────────────────────────────────────────────
     def filters_changed(self):
-        self.refresh_summary()
         self.reel_page.filters_changed()
 
-    def show_tab(self, index):
-        self.tabs.setCurrentIndex(index)
+    def current_tab(self):
+        return self.pages.currentIndex()
 
-    def on_tab_changed(self, index):
-        name = ("reel", "library", "settings")[index] if index < 3 else "reel"
-        self.filter_summary.setVisible(name == "reel")
-        self.position.setVisible(name == "reel")
-        if name == "library":
+    def show_tab(self, index):
+        self.pages.setCurrentIndex(index)
+        self.nav_buttons[index].setChecked(True)
+        if index == 1:
             self.library.reload()
-        elif name == "settings":
+        elif index == 2:
             self.settings.fill_outputs()     # monitors come and go
             self.settings.refresh_hint()
 
-    def set_position(self, text):
-        self.position.setText(text)
-
-    def refresh_summary(self):
-        bits = [core.SOURCES[core.source_index(core.effective_source(self.prefs))][0].upper()]
-        theme = core.theme_key(self.prefs)
-        if theme != "all":
-            bits.append(core.theme_label(theme).upper())
-        orientation = dict((v, k) for k, v in core.ORIENTATIONS)[self.prefs["orientation"]]
-        bits.append(orientation.upper())
-        bits.append(dict((v, k) for k, v in core.MINIMUMS)[self.prefs["minimum"]].upper())
-        if self.prefs["source"] == "wallhaven":
-            cats = [name for name, key in (("GENERAL", "wallhaven_general"),
-                                           ("ANIME", "wallhaven_anime"),
-                                           ("PEOPLE", "wallhaven_people"))
-                    if self.prefs[key]]
-            bits.append("+".join(cats) or "NO CATEGORIES")
-        self.filter_summary.setText("  ·  ".join(bits))
-
     def retheme(self):
-        self.refresh_summary()
         self.reel_page.retheme()
 
     def show_toast(self, text):
         self.toast.setText(text)
+        self._place_toast()
         self.toast.show()
+        self.toast.raise_()
         self.toast_timer.start(4000)
+
+    def _place_toast(self):
+        area = self.centralWidget().rect()
+        width = min(520, area.width() - 32)
+        self.toast.setFixedWidth(width)
+        self.toast.adjustSize()
+        bottom = 96 if IS_ANDROID else 24
+        self.toast.move((area.width() - width) // 2 + (0 if IS_ANDROID else 34),
+                        area.height() - self.toast.height() - bottom)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.toast.isVisible():
+            self._place_toast()
 
     def hide_toast(self):
         self.toast.hide()
@@ -308,23 +346,23 @@ class Reel(QMainWindow):
             sc.setEnabled(not interactive)
 
     def _save(self):
-        if self.tabs.currentIndex() == 0:
+        if self.current_tab() == 0:
             self.reel_page.save()
 
     def _delete(self):
-        if self.tabs.currentIndex() == 0:
+        if self.current_tab() == 0:
             self.reel_page.delete()
-        elif self.tabs.currentIndex() == 1:
+        elif self.current_tab() == 1:
             self.library.delete_selected()
 
     def _nav(self, direction):
-        if self.tabs.currentIndex() != 0:
+        if self.current_tab() != 0:
             return
         page = self.reel_page
         page.go(page.index + direction)
 
     def _escape(self):
-        if self.tabs.currentIndex() == 1 and self.library.footer.currentIndex() == 1:
+        if self.current_tab() == 1 and self.library.asking():
             self.library.cancel_delete()
             return
         self.close()

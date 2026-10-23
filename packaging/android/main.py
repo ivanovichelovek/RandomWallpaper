@@ -99,7 +99,7 @@ SHOTS = PRIVATE / "shots"
 
 
 def seed_library():
-    """A few kept wallpapers, so the Downloaded tab is not empty."""
+    """A few kept wallpapers, so the Saved tab is not empty."""
     import shutil
     prefs = dict(core.load_prefs(), theme="autumn", source="konachan")
     for _ in range(3):

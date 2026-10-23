@@ -105,6 +105,10 @@ DEFAULTS = {
     # Ask GitHub for a newer release each time the window opens, and offer
     # to install it. Installed builds only; see ui.settings_page.
     "check_updates": True,
+    # The window's colours: taken from the wallpaper on screen, or one fixed
+    # hue; and dark, light, or whatever the system is set to. See ui.style.
+    "colors": "wallpaper",
+    "appearance": "system",
 }
 
 SCREEN_MODES = [
@@ -117,7 +121,7 @@ ROTATIONS = [
     ("Shuffle my picks", "shuffle"),
 ]
 # The shuffle set is a category like the seasons — a directory under SAVE_DIR
-# filled from the Downloaded tab — but not a theme: nothing is downloaded for
+# filled from the Saved tab — but not a theme: nothing is downloaded for
 # it and the calendar never lands on it.
 SHUFFLE = "shuffle"
 
@@ -865,7 +869,7 @@ def wallpaper_was_changed_by_hand(state, outputs=None):
     if not ours:
         return False          # nothing applied yet: nothing to contradict
     if not Path(ours).exists():
-        # Our own file was deleted — from the Downloaded tab, or with a file
+        # Our own file was deleted — from the Saved tab, or with a file
         # manager. That is not someone choosing a different wallpaper, and
         # reading it as one would switch the rotation off for the ordinary act
         # of tidying up. run_auto notices the gap separately and draws again.
@@ -973,6 +977,31 @@ def current_slot(prefs, now):
         h, m = max(passed) if passed else times[-1]
         return f"{day.isoformat()}T{h:02d}:{m:02d}"
     return now.date().isoformat()
+
+
+def next_change(prefs, now):
+    """When the slot current_slot() is in ends: the next time the rotation
+    is due to put up a new wallpaper, as a naive local datetime."""
+    mode = prefs.get("change_mode", "midnight")
+    midnight = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
+    if mode == "every":
+        try:
+            n = max(MIN_CHANGE_EVERY, int(prefs.get("change_every", 60)))
+        except (TypeError, ValueError):
+            n = 60
+        start = (now.hour * 60 + now.minute) // n * n + n
+        nxt = datetime.combine(now.date(), datetime.min.time()) + timedelta(minutes=start)
+        return min(nxt, midnight)
+    if mode == "times":
+        try:
+            times = parse_times(prefs.get("change_times", []))
+        except ValueError:
+            return midnight
+        later = [t for t in times if t > (now.hour, now.minute)]
+        day = now.date() if later else now.date() + timedelta(days=1)
+        h, m = min(later) if later else times[0]
+        return datetime.combine(day, datetime.min.time()) + timedelta(hours=h, minutes=m)
+    return midnight
 
 
 # ── the calendar rotation ───────────────────────────────────────────────────
@@ -1247,7 +1276,7 @@ def run_auto(prefs, force=False, log=print, today=None, now=None, quiet=False):
     if shuffling and not pool_images(SHUFFLE):
         # Nothing to shuffle is nothing to do. Not a download: a set of your
         # own picks is the whole point, and "all" would quietly stand in.
-        note(f"nothing in the shuffle set yet — add some on the Downloaded "
+        note(f"nothing in the shuffle set yet — add some on the Saved "
              f"tab, or put files in {theme_pool(SHUFFLE)}")
         return 0
 

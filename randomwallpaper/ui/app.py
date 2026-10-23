@@ -60,7 +60,7 @@ def run_app(prefs, args, on_shown=None):
     app.setDesktopFileName(APP_ID)
     if ICON_PATH.exists():
         app.setWindowIcon(QIcon(str(ICON_PATH)))
-    style.apply(app)
+    style.apply(app, prefs)
 
     server = QLocalServer()
     # A stale socket file from a crashed instance would otherwise make every
