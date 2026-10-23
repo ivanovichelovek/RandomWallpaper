@@ -42,7 +42,9 @@ jobs:
           ~/deploy-venv/bin/pip install -q "PySide6==$PYSIDE_VERSION" buildozer cython \
             jinja2 pkginfo tqdm "packaging==24.1"
           echo "PYTHON=$HOME/deploy-venv/bin/python" >> "$GITHUB_ENV"
-          # buildozer looks for cython on PATH.
+          # buildozer looks for cython on PATH, and pip-installs with --user
+          # unless it sees a virtualenv.
+          echo "VIRTUAL_ENV=$HOME/deploy-venv" >> "$GITHUB_ENV"
           echo "$HOME/deploy-venv/bin" >> "$GITHUB_PATH"
 
       - name: Android wheels
