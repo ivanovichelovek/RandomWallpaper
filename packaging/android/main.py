@@ -44,6 +44,38 @@ def _trust_android_cas():
 
 _trust_android_cas()
 
+
+def _dark_system_bars(argb=0xFF0E0F16):
+    """Paint the status and navigation bars the window's own colour.
+
+    Qt leaves the navigation bar white under a dark window, whatever the
+    activity's theme. Window colours belong to Android's UI thread, so the
+    change goes there as a Runnable. This runs on Qt's main thread, which
+    Java started, so pyjnius can see the app's own classes from here.
+    """
+    try:
+        from jnius import PythonJavaClass, autoclass, java_method
+    except ImportError:
+        return
+    color = argb - (1 << 32) if argb >= 1 << 31 else argb
+
+    class Paint(PythonJavaClass):
+        __javainterfaces__ = ["java/lang/Runnable"]
+        __javacontext__ = "app"
+
+        @java_method("()V")
+        def run(self):
+            window = activity.getWindow()
+            window.setStatusBarColor(color)
+            window.setNavigationBarColor(color)
+
+    try:
+        activity = autoclass("org.kivy.android.PythonActivity").mActivity
+        _dark_system_bars.paint = Paint()       # kept alive until it has run
+        activity.runOnUiThread(_dark_system_bars.paint)
+    except Exception as exc:
+        print(f"system bars: {exc}", flush=True)
+
 from randomwallpaper import core  # noqa: E402
 from randomwallpaper.paths import CACHE_DIR  # noqa: E402
 
@@ -121,7 +153,12 @@ def main():
     if touring:
         seed_library()
     from randomwallpaper.ui.app import run_app
-    return run_app(prefs, None, on_shown=tour if touring else None)
+
+    def shown(win):
+        _dark_system_bars()
+        if touring:
+            tour(win)
+    return run_app(prefs, None, on_shown=shown)
 
 
 if __name__ == "__main__":

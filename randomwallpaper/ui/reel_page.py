@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import core
+from ..paths import IS_ANDROID
 from .style import touch_scroll
 
 REEL_AHEAD = core.REEL_AHEAD
@@ -116,17 +117,30 @@ class ReelPage(QWidget):
         # ── bottom bar ────────────────────────────────────────────────────
         bottom = QWidget()
         bottom.setObjectName("bottombar")
-        bottom_layout = QHBoxLayout(bottom)
-        bottom_layout.setContentsMargins(14, 8, 14, 8)
-        bottom_layout.setSpacing(12)
         root.addWidget(bottom)
+        if IS_ANDROID:
+            # A phone's width holds the buttons or the name, not both: the
+            # name and its details get a row of their own above them.
+            stack = QVBoxLayout(bottom)
+            stack.setContentsMargins(14, 10, 14, 10)
+            stack.setSpacing(8)
+            meta_row = QHBoxLayout()
+            stack.addLayout(meta_row)
+            bottom_layout = QHBoxLayout()
+            bottom_layout.setSpacing(8)
+            stack.addLayout(bottom_layout)
+        else:
+            bottom_layout = QHBoxLayout(bottom)
+            bottom_layout.setContentsMargins(14, 8, 14, 8)
+            bottom_layout.setSpacing(12)
+            meta_row = bottom_layout
 
         meta = QVBoxLayout()
         meta.setSpacing(2)
         meta_widget = QWidget()
         meta_widget.setObjectName("barMeta")
         meta_widget.setLayout(meta)
-        bottom_layout.addWidget(meta_widget, 1)
+        meta_row.addWidget(meta_widget, 1)
 
         self.frame_name = QLabel()
         self.frame_name.setObjectName("frameName")
@@ -160,13 +174,13 @@ class ReelPage(QWidget):
         self.delete_btn.setProperty("class", "danger")
         self.delete_btn.setToolTip("Throw this one away (D)")
         self.delete_btn.clicked.connect(self.delete)
-        bottom_layout.addWidget(self.delete_btn)
+        bottom_layout.addWidget(self.delete_btn, 1 if IS_ANDROID else 0)
 
         self.save_btn = QPushButton("Save")
         self.save_btn.setProperty("class", "accent")
         self.save_btn.setToolTip(f"Keep it in {core.SAVE_DIR} (S)")
         self.save_btn.clicked.connect(self.save)
-        bottom_layout.addWidget(self.save_btn)
+        bottom_layout.addWidget(self.save_btn, 1 if IS_ANDROID else 0)
 
         # ── reel strip ────────────────────────────────────────────────────
         strip_scroll = QScrollArea()
