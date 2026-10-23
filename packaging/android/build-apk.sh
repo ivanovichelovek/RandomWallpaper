@@ -50,5 +50,19 @@ RW_VERSION=$VERSION "$PY" "$repo/packaging/android/deploy.py" \
 apk=$(ls "$stage"/*.apk 2>/dev/null | head -n1 || true)
 [ -n "$apk" ] || { echo "no .apk came out" >&2; exit 1; }
 mkdir -p "$repo/dist/android"
-cp "$apk" "$repo/dist/android/RandomWallpaper-$VERSION-android-${ARCH:-x86_64}-debug.apk"
+NAME=$("$PY" -c "from randomwallpaper.update import asset_name
+print(asset_name('$VERSION', kind='android', machine='${ARCH:-x86_64}'))")
+if [ "${RW_BUILD_MODE:-debug}" = release ]; then
+    # Signed with the one key every release is signed with, or Android will
+    # not install the next version over this one. KEYSTORE is the file,
+    # KEYSTORE_PASSWORD and KEY_ALIAS its password and key.
+    tools=$(ls -d "$ANDROID_SDK"/build-tools/* | sort -V | tail -n1)
+    "$tools/zipalign" -p -f 4 "$apk" "$stage/aligned.apk"
+    "$tools/apksigner" sign --ks "$KEYSTORE" --ks-pass env:KEYSTORE_PASSWORD \
+        --ks-key-alias "$KEY_ALIAS" --key-pass env:KEYSTORE_PASSWORD \
+        --out "$repo/dist/android/$NAME" "$stage/aligned.apk"
+    "$tools/apksigner" verify --print-certs "$repo/dist/android/$NAME" | head -n 3
+else
+    cp "$apk" "$repo/dist/android/${NAME%.apk}-debug.apk"
+fi
 ls -l "$repo/dist/android"

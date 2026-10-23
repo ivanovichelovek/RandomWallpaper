@@ -44,6 +44,9 @@ def _adjusted(self, spec_file, pysidedeploy_config):
     self.set_value("app", "title", "Random Wallpaper")
     self.set_value("app", "version", os.environ.get("RW_VERSION", "0.0.0"))
     self.set_value("app", "orientation", "portrait")
+    # A release build is an .apk too, not the .aab buildozer makes by
+    # default: it is installed straight from the GitHub release.
+    self.set_value("app", "android.release_artifact", "apk")
     # The bundled fonts, icons and licences: by default buildozer packages
     # code and a few image types only, and the app fell back to Roboto.
     exts = self.get_value("app", "source.include_exts") or "py"
@@ -104,6 +107,18 @@ def _with_plugins(self, *args, **kwargs):
 
 
 android_config.AndroidConfig.__init__ = _with_plugins
+
+# debug (the default: debuggable, so the tour can read the app's files) or
+# release (unsigned here; build-apk.sh signs it).
+_plugins_then_mode = android_config.AndroidConfig.__init__
+
+
+def _with_mode(self, *args, **kwargs):
+    _plugins_then_mode(self, *args, **kwargs)
+    self._mode = os.environ.get("RW_BUILD_MODE", "debug")
+
+
+android_config.AndroidConfig.__init__ = _with_mode
 
 sys.argv = [str(SCRIPTS / "android_deploy.py")] + sys.argv[1:]
 runpy.run_path(sys.argv[0], run_name="__main__")

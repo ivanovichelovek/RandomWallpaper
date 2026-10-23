@@ -25,7 +25,7 @@ adb shell run-as "$PKG" sh -c "'mkdir -p files && touch files/tour && rm -rf fil
 adb shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null
 
 seen=""
-for _ in $(seq 1 120); do
+for _ in $(seq 1 240); do
     sleep 2
     names=$(adb shell run-as "$PKG" ls files/shots 2>/dev/null | tr -d '\r')
     for f in $names; do

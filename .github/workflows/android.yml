@@ -1,19 +1,31 @@
 name: android
 
 # The Android app: built with pyside6-android-deploy, installed on an
-# emulator, started, and walked through every tab (packaging/android/main.py
-# has the tour). The screenshots and the logcat are the run's artifacts:
-#   gh run download <id>
+# emulator and started.
+#
+# A debug build (a push, or by hand) is walked through every tab — the tour
+# is in packaging/android/main.py — and its screenshots and logcat are the
+# run's artifacts: gh run download <id>. release.yml calls this for the
+# signed release builds: an x86_64 one is installed, started and checked on
+# the emulator, an arm64 one (for phones) only built.
 on:
   push:
     branches: [android]
     paths-ignore: ["README.md"]
   workflow_dispatch:
+    inputs:
+      mode: { type: choice, options: [debug, release], default: debug }
+      arch: { type: choice, options: [x86_64, aarch64], default: x86_64 }
+  workflow_call:
+    inputs:
+      mode: { type: string, default: debug }
+      arch: { type: string, default: x86_64 }
 
 env:
   PYSIDE_VERSION: "6.12.0"
   NDK_VERSION: "28.2.13676358"
-  ARCH: x86_64
+  ARCH: ${{ inputs.arch || 'x86_64' }}
+  RW_BUILD_MODE: ${{ inputs.mode || 'debug' }}
   PACKAGE: dev.ivanc.randomwallpaper
 
 jobs:
@@ -78,28 +90,44 @@ jobs:
           ~/deploy-venv/bin/pip install -q platformdirs
           QT_QPA_PLATFORM=offscreen "$PYTHON" packaging/make_icons.py
 
+      - name: The release key
+        if: env.RW_BUILD_MODE == 'release'
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+        run: |
+          [ -n "$ANDROID_KEYSTORE" ] || { echo "::error::no ANDROID_KEYSTORE secret"; exit 1; }
+          echo "$ANDROID_KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "KEYSTORE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+
       - name: Build
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: packaging/android/build-apk.sh 2>&1 | tee build.log; test "${PIPESTATUS[0]}" -eq 0
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: build-log
+          name: build-log-${{ env.RW_BUILD_MODE }}-${{ env.ARCH }}
           path: build.log
       - uses: actions/upload-artifact@v4
         with:
-          name: apk
+          name: apk-${{ env.RW_BUILD_MODE }}-${{ env.ARCH }}
           path: dist/android/*.apk
           if-no-files-found: error
 
   screenshots:
     needs: apk
+    # The emulator is x86_64: an arm64 build is only built.
+    if: (inputs.arch || 'x86_64') == 'x86_64'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
-        with: { name: apk, path: apk }
+        with:
+          name: apk-${{ inputs.mode || 'debug' }}-x86_64
+          path: apk
       - name: KVM for the emulator
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -113,9 +141,14 @@ jobs:
           profile: pixel_6
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: packaging/android/tour.sh apk/*.apk shots
+          # A release build is not debuggable, so it cannot be toured: it is
+          # installed, started and watched instead.
+          script: >-
+            if [ "${{ inputs.mode || 'debug' }}" = release ];
+            then packaging/android/check.sh apk/*.apk shots;
+            else packaging/android/tour.sh apk/*.apk shots; fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: android-screenshots
+          name: android-screenshots-${{ inputs.mode || 'debug' }}
           path: shots/

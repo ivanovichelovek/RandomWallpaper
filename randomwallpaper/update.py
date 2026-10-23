@@ -162,6 +162,9 @@ def asset_name(version, kind=None, machine=None, fmt=None):
     if kind == "macos":
         arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
         return f"RandomWallpaper-{version}-macos-{arch}.dmg"
+    if kind == "android":
+        arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
+        return f"RandomWallpaper-{version}-android-{arch}.apk"
     return None
 
 

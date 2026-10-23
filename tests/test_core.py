@@ -1119,6 +1119,8 @@ names = {
     ("linux", "x86_64", "rpm"): "random-wallpaper-1.2.3-1.x86_64.rpm",
     ("windows", "AMD64", None): "RandomWallpaper-1.2.3-windows-x64-setup.exe",
     ("macos", "arm64", None): "RandomWallpaper-1.2.3-macos-arm64.dmg",
+    ("android", "aarch64", None): "RandomWallpaper-1.2.3-android-arm64.apk",
+    ("android", "x86_64", None): "RandomWallpaper-1.2.3-android-x86_64.apk",
 }
 check("release asset names are pinned",
       all(update.asset_name("1.2.3", kind=k, machine=m, fmt=f) == want
