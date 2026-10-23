@@ -44,6 +44,9 @@ def _adjusted(self, spec_file, pysidedeploy_config):
     self.set_value("app", "title", "Random Wallpaper")
     self.set_value("app", "version", os.environ.get("RW_VERSION", "0.0.0"))
     self.set_value("app", "orientation", "portrait")
+    # Material's dark theme: dark system bars around a dark window. The
+    # default, Theme.NoTitleBar, draws a white navigation bar under it.
+    self.set_value("app", "android.apptheme", "@android:style/Theme.Material.NoActionBar")
     # The SDK packages are installed already; nothing to prompt for.
     self.set_value("app", "android.accept_sdk_license", "True")
     self.set_value("app", "android.skip_update", "True")
@@ -55,6 +58,42 @@ def _adjusted(self, spec_file, pysidedeploy_config):
 
 
 buildozer.BuildozerConfig.__init__ = _adjusted
+
+
+# Qt plugins: the tool keeps only those the Qt modules declare, which on
+# Android is the platform plugin alone — no image formats beyond PNG, so
+# every JPEG frame decoded to nothing. These folders are added whole, from
+# whatever the wheel carries.
+EXTRA_PLUGIN_FOLDERS = ("imageformats", "iconengines")
+
+from deploy_lib.android import android_config  # noqa: E402
+
+_configured = android_config.AndroidConfig.__init__
+
+
+def _with_plugins(self, *args, **kwargs):
+    _configured(self, *args, **kwargs)
+    import re
+    import zipfile
+    if not self.wheel_pyside:
+        return
+    # Named as the tool names them: "imageformats_qjpeg" for
+    # plugins/imageformats/libplugins_imageformats_qjpeg_<arch>.so.
+    pattern = re.compile(r"/plugins/(?:%s)/libplugins_(.+)_%s\.so$"
+                         % ("|".join(EXTRA_PLUGIN_FOLDERS), self.arch))
+    found = []
+    with zipfile.ZipFile(self.wheel_pyside) as wheel:
+        for name in wheel.namelist():
+            match = pattern.search(name)
+            if match:
+                found.append(match.group(1))
+    plugins = list(self.qt_plugins)
+    plugins += [p for p in sorted(found) if p not in plugins]
+    self.qt_plugins = plugins
+    print(f"[deploy.py] Qt plugins: {plugins}", flush=True)
+
+
+android_config.AndroidConfig.__init__ = _with_plugins
 
 sys.argv = [str(SCRIPTS / "android_deploy.py")] + sys.argv[1:]
 runpy.run_path(sys.argv[0], run_name="__main__")

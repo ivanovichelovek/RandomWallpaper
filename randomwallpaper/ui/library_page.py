@@ -26,7 +26,9 @@ from .. import core
 from .style import CATEGORY_COLORS, FG_DIM, touch_scroll
 from ..paths import CACHE_DIR, IS_ANDROID
 
-THUMB_W, THUMB_H = 220, 124
+# Smaller on a phone, so two tiles share its width rather than one sitting
+# beside an empty column.
+THUMB_W, THUMB_H = (160, 90) if IS_ANDROID else (220, 124)
 THUMB_DIR = CACHE_DIR / "thumbs"
 
 
@@ -463,7 +465,8 @@ class LibraryPage(QWidget):
         if chosen:
             self.count.setText(f"{len(chosen)} of {total} selected")
         else:
-            self.count.setText(f"{total} kept  ·  click to pick")
+            self.count.setText(f"{total} kept  ·  "
+                               f"{'tap' if IS_ANDROID else 'click'} to pick")
 
     def eventFilter(self, watched, event):
         if watched is self.list and event.type() == QEvent.KeyPress \

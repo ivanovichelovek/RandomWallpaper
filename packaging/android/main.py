@@ -88,6 +88,8 @@ def tour(win):
     steps = [
         ("random", lambda: win.show_tab(0)),
         ("downloaded", lambda: win.show_tab(1)),
+        # One tile picked: the actions enabled, the selection drawn.
+        ("downloaded-picked", lambda: win.library.list.setCurrentRow(0)),
         ("settings-top", settings_to(0)),
         ("settings-middle", settings_to(0.5)),
         ("settings-bottom", settings_to(1)),
