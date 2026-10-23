@@ -10,9 +10,12 @@ a answer it cannot trust.
 """
 import sys
 
+from ..paths import IS_ANDROID
 from .common import WallpaperError, custom_command, trash  # noqa: F401
 
-if sys.platform.startswith("win"):
+if IS_ANDROID:
+    from . import android as _backend
+elif sys.platform.startswith("win"):
     from . import windows as _backend
 elif sys.platform == "darwin":
     from . import macos as _backend

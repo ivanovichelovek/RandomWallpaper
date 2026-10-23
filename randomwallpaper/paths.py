@@ -19,7 +19,10 @@ APP_ID = "dev.ivanc.RandomWallpaper"
 
 IS_WINDOWS = sys.platform.startswith("win")
 IS_MACOS = sys.platform == "darwin"
-IS_LINUX = not IS_WINDOWS and not IS_MACOS
+# python-for-android reports "linux", and its Python has no desktop to talk
+# to; the variable is what its Java side sets before Python starts.
+IS_ANDROID = "ANDROID_PRIVATE" in os.environ or hasattr(sys, "getandroidapilevel")
+IS_LINUX = not IS_WINDOWS and not IS_MACOS and not IS_ANDROID
 
 
 def _dirs():
@@ -29,6 +32,10 @@ def _dirs():
     suite runnable — on a bare interpreter with nothing pip-installed, which
     is how the calendar logic gets exercised in CI before any wheel exists.
     """
+    if IS_ANDROID:
+        # The app's own files directory: private, and kept until uninstall.
+        base = Path(os.environ.get("ANDROID_PRIVATE") or Path.home())
+        return base / "cache", base / "config", base / "state"
     try:
         import platformdirs
     except ImportError:
@@ -57,7 +64,8 @@ CACHE_DIR, CONFIG_DIR, STATE_DIR = _dirs()
 # An escape hatch for a machine where the home directory is not the right
 # place — a network home, a Windows profile on a small system drive.
 SAVE_DIR = Path(os.environ.get("RANDOM_WALLPAPER_DIR")
-                or Path.home() / "random_wallpaper")
+                or (Path(os.environ.get("ANDROID_PRIVATE", "")) if IS_ANDROID
+                    else Path.home()) / "random_wallpaper")
 
 # API answers, kept apart from the pending downloads so pruning one cannot
 # touch the other.

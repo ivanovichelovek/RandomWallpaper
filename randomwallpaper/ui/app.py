@@ -46,7 +46,8 @@ def _try_forward(argv):
     return True
 
 
-def run_app(prefs, args):
+def run_app(prefs, args, on_shown=None):
+    """The window. `on_shown(win)`, if given, runs once it is up."""
     # Forward to a window that is already open, the way a second launch of
     # `random-wallpaper --theme now` should retheme the reel on screen rather
     # than doing nothing while an unrelated process exits quietly.
@@ -98,4 +99,6 @@ def run_app(prefs, args):
     win.show()
     # Once the window is up, so a slow or absent network never holds it.
     QTimer.singleShot(1500, win.settings.check_at_start)
+    if on_shown:
+        QTimer.singleShot(0, lambda: on_shown(win))
     return app.exec()
