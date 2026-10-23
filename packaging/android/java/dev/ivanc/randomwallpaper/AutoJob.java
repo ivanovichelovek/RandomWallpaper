@@ -45,8 +45,23 @@ public class AutoJob extends JobService {
         return context.getSystemService(JobScheduler.class).getPendingJob(ID) != null;
     }
 
+    /** Closer together than this, a run is skipped before Python starts. */
+    private static final long MIN_GAP_MS = 5 * 60 * 1000L;
+
     @Override
     public boolean onStartJob(final JobParameters params) {
+        // JobScheduler can bring a periodic job round far sooner than its
+        // period (seen on the emulator: every minute or so). A rotation run
+        // a few minutes after the last has nothing to do, and each one
+        // starts a Python: skip it cheaply.
+        android.content.SharedPreferences seen = getSharedPreferences("auto", MODE_PRIVATE);
+        long now = System.currentTimeMillis();
+        long last = seen.getLong("last_run", 0);
+        if (now - last < MIN_GAP_MS && now >= last) {
+            Log.i(TAG, "rotation skipped: ran " + (now - last) / 1000 + " s ago");
+            return false;
+        }
+        seen.edit().putLong("last_run", now).commit();
         new Thread(() -> {
             try {
                 File filesDir = getFilesDir();
