@@ -60,20 +60,27 @@ def _load_jni_shim():
 _load_jni_shim()
 
 
-def _dark_system_bars(argb=0xFF0E0F16):
-    """Paint the status and navigation bars the window's own colour.
+def _paint_system_bars(_tokens=None):
+    """Paint the status and navigation bars the window's own colour, with
+    dark icons on a light window and light ones on a dark.
 
-    Qt leaves the navigation bar white under a dark window, whatever the
-    activity's theme. Window colours belong to Android's UI thread, so the
-    change goes there as a Runnable. This runs on Qt's main thread, which
-    Java started, so pyjnius can see the app's own classes from here.
+    Qt leaves the bars as the system theme has them, white under a dark
+    window. Window colours belong to Android's UI thread, so the change goes
+    there as a Runnable. This runs on Qt's main thread, which Java started,
+    so pyjnius can see the app's own classes from here. Registered with the
+    theme, it follows every tint and appearance change; and it runs again
+    whenever the app comes back to the front, since a recreated activity's
+    window starts with the default bars.
     """
     try:
         from jnius import PythonJavaClass, autoclass, java_method
     except Exception as exc:
         print(f"system bars: no pyjnius: {exc!r}", flush=True)
         return
-    color = argb - (1 << 32) if argb >= 1 << 31 else argb
+    from randomwallpaper.ui import style
+    argb = 0xFF000000 | int(style.token("bg").lstrip("#"), 16)
+    color = argb - (1 << 32)
+    light = not style.theme.dark()
 
     class Paint(PythonJavaClass):
         __javainterfaces__ = ["java/lang/Runnable"]
@@ -90,16 +97,32 @@ def _dark_system_bars(argb=0xFF0E0F16):
                 window.getDecorView().setBackgroundColor(color)
                 if hasattr(window, "setNavigationBarContrastEnforced"):
                     window.setNavigationBarContrastEnforced(False)
-                print("system bars: painted", flush=True)
+                # Dark icons on a light bar (API 30+): the status bar's clock
+                # and the navigation handle would be white on white.
+                controller = window.getInsetsController()
+                if controller is not None:
+                    flags = 8 | 16      # APPEARANCE_LIGHT_STATUS_BARS | _NAVIGATION_BARS
+                    controller.setSystemBarsAppearance(flags if light else 0, flags)
+                print(f"system bars: painted {'light' if light else 'dark'}", flush=True)
             except Exception as exc:
                 print(f"system bars: {exc}", flush=True)
 
     try:
         activity = autoclass("dev.ivanc.randomwallpaper.WallpaperActivity").mActivity
-        _dark_system_bars.paint = Paint()       # kept alive until it has run
-        activity.runOnUiThread(_dark_system_bars.paint)
+        _paint_system_bars.paint = Paint()       # kept alive until it has run
+        activity.runOnUiThread(_paint_system_bars.paint)
     except Exception as exc:
         print(f"system bars: {exc}", flush=True)
+
+
+def _follow_system_bars(app):
+    from PySide6.QtCore import Qt
+    from randomwallpaper.ui import style
+    style.theme.listeners.append(_paint_system_bars)
+    app.applicationStateChanged.connect(
+        lambda state: _paint_system_bars() if state == Qt.ApplicationActive else None)
+    _paint_system_bars()
+
 
 from randomwallpaper import core  # noqa: E402
 from randomwallpaper.paths import CACHE_DIR  # noqa: E402
@@ -159,13 +182,14 @@ def tour(win):
     ]
 
     def set_picked():
-        from randomwallpaper import desktop
         chosen = win.library.selected() or [p for p, _ in win.library.entries]
         if not chosen:
             print("rw-tour: wallpaper NOT set: nothing saved", flush=True)
             return
         try:
-            desktop.set_wallpaper(chosen[0])
+            if not win.library.selected():
+                win.library.list.setCurrentRow(0)
+            win.library.set_as_wallpaper()
             print(f"rw-tour: wallpaper set {chosen[0].name}", flush=True)
         except Exception as exc:
             print(f"rw-tour: wallpaper NOT set: {exc!r}", flush=True)
@@ -205,10 +229,10 @@ def main():
 
     def shown(win):
         from PySide6.QtCore import QTimer
-        _dark_system_bars()
+        _follow_system_bars(win.app)
         # Again once Qt has finished setting its window up, which may
         # repaint the bars after the first call.
-        QTimer.singleShot(1500, _dark_system_bars)
+        QTimer.singleShot(1500, _paint_system_bars)
         if touring:
             tour(win)
     return run_app(prefs, None, on_shown=shown)

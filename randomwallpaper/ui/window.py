@@ -170,6 +170,8 @@ class Reel(QMainWindow):
 
         self._install_shortcuts()
         self.show_tab(0)
+        if IS_ANDROID:
+            self._resume_after_restart()
 
     def _paint_icons(self, t):
         for name, button in zip(SECTIONS, self.nav_buttons):
@@ -222,13 +224,52 @@ class Reel(QMainWindow):
         name = screen.name() if screen else ""
         return name if name in core.wallpapers_on_outputs() else None
 
+    # ── surviving Qt's restart on Android ───────────────────────────────
+    # Setting a wallpaper on Android 12+ re-themes the system from its
+    # colours and recreates the activity, and Qt answers that by restarting
+    # the whole app (QtActivityBase: "no reliable way to keep the app
+    # running … in case of an Activity only restart"). So where the user was
+    # is written down first, and a launch within a minute picks it up again.
+    RESUME_FILE = core.CACHE_DIR / "resume.json"
+
+    def _remember_for_restart(self, message):
+        import json
+        import time
+        try:
+            core.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            self.RESUME_FILE.write_text(json.dumps(
+                {"at": time.time(), "tab": self.current_tab(), "toast": message}))
+        except OSError:
+            pass
+
+    def _resume_after_restart(self):
+        import json
+        import time
+        try:
+            note = json.loads(self.RESUME_FILE.read_text())
+            self.RESUME_FILE.unlink()
+        except (OSError, ValueError):
+            return
+        if time.time() - note.get("at", 0) > 60:
+            return
+        self.show_tab(int(note.get("tab", 0)))
+        if note.get("toast"):
+            QTimer.singleShot(300, lambda: self.show_toast(note["toast"]))
+
     def set_and_latch(self, path, failure="could not set it", output=None):
+        if IS_ANDROID:
+            self._remember_for_restart(f"Wallpaper set  {getattr(path, 'name', path)}")
         try:
             if output:
                 core.set_wallpaper_on(output, path)
             else:
                 core.set_wallpaper(path)
         except (subprocess.SubprocessError, OSError) as exc:
+            if IS_ANDROID:
+                try:
+                    self.RESUME_FILE.unlink()
+                except OSError:
+                    pass
             self.show_toast(f"{failure}: {exc}")
             return False
 
