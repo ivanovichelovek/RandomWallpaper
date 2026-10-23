@@ -12,8 +12,10 @@ repo=$PWD
 
 PY=${PYTHON:-python3}
 VERSION=$("$PY" -c 'import randomwallpaper; print(randomwallpaper.__version__)')
-pyside=$(ls "$WHEELS"/pyside6-*android*.whl "$WHEELS"/PySide6-*android*.whl 2>/dev/null | head -n1)
-shiboken=$(ls "$WHEELS"/shiboken6-*android*.whl | head -n1)
+pyside=$(find "$WHEELS" -maxdepth 1 -iname 'pyside6-*android*.whl' | head -n1)
+shiboken=$(find "$WHEELS" -maxdepth 1 -iname 'shiboken6-*android*.whl' | head -n1)
+[ -n "$pyside" ] && [ -n "$shiboken" ] || { echo "no Android wheels in $WHEELS" >&2; exit 1; }
+echo "PySide6 $VERSION build: $pyside, $shiboken"
 
 # The deploy tool packages everything under the directory main.py is in, so
 # that directory holds the app and nothing else.
