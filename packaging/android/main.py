@@ -148,7 +148,7 @@ def tour(win):
         # One tile picked: the actions enabled, the selection drawn.
         ("saved-picked", lambda: win.library.list.setCurrentRow(0)),
         # Put that one up through WallpaperManager, and say how it went.
-        ("set-wallpaper", set_picked),
+        ("set-wallpaper", lambda: set_picked()),
         ("settings-top", settings_to(0)),
         ("settings-middle", settings_to(0.5)),
         ("settings-bottom", settings_to(1)),
