@@ -232,7 +232,6 @@ class SettingsPage(QWidget):
         often.addWidget(self.every_label)
         if IS_ANDROID:
             self.every = NumberPicker()
-            self.every.setMinimumContentsLength(3)
             self.every.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         else:
             self.every = QSpinBox()

@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from .. import core
 from . import style
 from .style import CATEGORY_COLORS, touch_scroll
-from .widgets import Picker, Sheet, label
+from .widgets import Grid, Picker, Sheet, label
 from ..paths import CACHE_DIR, IS_ANDROID
 
 # Smaller on a phone, so two tiles share its width rather than one sitting
@@ -270,9 +270,9 @@ class LibraryPage(QWidget):
             stack.setSpacing(8)
             bl = QHBoxLayout()
             stack.addLayout(bl)
-            actions = QGridLayout()
-            actions.setSpacing(8)
-            stack.addLayout(actions)
+            # Two by two, or one under the other on a screen too narrow.
+            actions = Grid(2)
+            stack.addWidget(actions)
         else:
             bottom_row.addStretch(1)
             bottom_row.addWidget(pill)
@@ -287,7 +287,7 @@ class LibraryPage(QWidget):
                 bl.addWidget(button)
             else:
                 button.setMinimumHeight(44)
-                actions.addWidget(button, row, column)
+                actions.add(button)
 
         self.count = label("", "strong")
         bl.addWidget(self.count, 1)

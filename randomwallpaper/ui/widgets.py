@@ -4,7 +4,7 @@ property; what that looks like is in style.py.
 """
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QBoxLayout, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel,
+    QBoxLayout, QButtonGroup, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel,
     QPushButton, QRadioButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -85,6 +85,59 @@ class Row(QWidget):
             self.box.setDirection(direction)
             self.box.setAlignment(self.right, Qt.AlignVCenter if across else Qt.AlignLeft)
             QTimer.singleShot(0, self.updateGeometry)
+        super().resizeEvent(event)
+
+
+class Grid(QWidget):
+    """Widgets in `columns` columns, or one column when they do not fit side
+    by side — the same order either way, row by row."""
+
+    def __init__(self, columns=2, spacing=8):
+        super().__init__()
+        self.columns = columns
+        self.items = []
+        self.grid = QGridLayout(self)
+        self.grid.setContentsMargins(0, 0, 0, 0)
+        self.grid.setSpacing(spacing)
+        self.current = None
+
+    def add(self, widget):
+        self.items.append(widget)
+        self._place(self.current or self.columns)
+
+    def _place(self, columns):
+        self.current = columns
+        for w in self.items:
+            self.grid.removeWidget(w)
+        for i, w in enumerate(self.items):
+            self.grid.addWidget(w, i // columns, i % columns)
+        for c in range(self.columns):
+            self.grid.setColumnStretch(c, 1 if c < columns else 0)
+
+    def minimumSizeHint(self):
+        widest = max((w.minimumSizeHint().width() for w in self.items), default=0)
+        return QSize(widest, self.grid.minimumSize().height())
+
+    def _grow(self):
+        # A column is taller than a grid: every container above has to make
+        # room, not only this one.
+        w = self
+        while w is not None:
+            w.updateGeometry()
+            if w.layout() is not None:
+                w.layout().invalidate()
+            w = w.parentWidget()
+
+    def resizeEvent(self, event):
+        # Each column as wide as its widest; columns need not be equal.
+        need = sum(max((w.minimumSizeHint().width() for w in self.items[c::self.columns]),
+                       default=0) for c in range(self.columns))
+        need += self.grid.spacing() * (self.columns - 1)
+        columns = self.columns if event.size().width() >= need else 1
+        if columns != self.current:
+            self._place(columns)
+            self.updateGeometry()
+            QTimer.singleShot(0, self._grow)
         super().resizeEvent(event)
 
 
@@ -272,13 +325,16 @@ class Picker(QComboBox):
 
     def __init__(self):
         super().__init__()
-        if IS_ANDROID:
-            # As narrow as the screen needs: the longest entry does not
-            # set the width.
-            self.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
-            self.setMinimumContentsLength(8)
-            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.sheet = None
+
+    def minimumSizeHint(self):
+        # On a phone as narrow as the screen needs — the longest entry sets
+        # the width it would like (sizeHint), not the least it can take.
+        hint = super().minimumSizeHint()
+        if not IS_ANDROID:
+            return hint
+        least = self.fontMetrics().horizontalAdvance("M" * 4) + 44
+        return QSize(min(hint.width(), least), hint.height())
 
     def showPopup(self):
         if not IS_ANDROID:
