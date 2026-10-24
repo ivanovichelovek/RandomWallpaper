@@ -12,14 +12,15 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QBoxLayout, QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QFrame,
     QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QRadioButton, QScrollArea, QSpinBox, QTextBrowser, QVBoxLayout, QWidget,
+    QRadioButton, QScrollArea, QSizePolicy, QSpinBox, QTextBrowser, QVBoxLayout,
+    QWidget,
 )
 
 from .. import __version__, core, schedule, update
 from ..paths import IS_ANDROID
 from .style import Switch, theme as look, touch_scroll
 from .widgets import (
-    Choice, Picker, Segmented, Sheet, card, label, repolish, row, rule, titled,
+    Choice, NumberPicker, Picker, Segmented, Sheet, card, label, repolish, row, rule, titled,
 )
 
 
@@ -229,9 +230,14 @@ class SettingsPage(QWidget):
         auto.addLayout(often)
         self.every_label = label("Every", "help")
         often.addWidget(self.every_label)
-        self.every = QSpinBox()
-        self.every.setButtonSymbols(QSpinBox.NoButtons)
-        self.every.setAlignment(Qt.AlignCenter)
+        if IS_ANDROID:
+            self.every = NumberPicker()
+            self.every.setMinimumContentsLength(3)
+            self.every.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        else:
+            self.every = QSpinBox()
+            self.every.setButtonSymbols(QSpinBox.NoButtons)
+            self.every.setAlignment(Qt.AlignCenter)
         self.every.setMinimumWidth(64)
         self.every_unit = self._combo(["minutes", "hours"])
         minutes = max(core.MIN_CHANGE_EVERY, int(prefs["change_every"]))

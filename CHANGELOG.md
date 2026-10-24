@@ -7,8 +7,10 @@ the app shows when it offers that update.
 
 - Android: the Settings tab fits the phone's width. Rows that do not fit
   side by side stack, and nothing scrolls sideways any more.
-- Android: Theme, Orientation and Minimum resolution in Settings no longer
-  crash the app. Their lists open as a sheet inside the app.
+- Android: lists, menus and the update offer no longer crash the app on a
+  real phone. Theme, Orientation, Minimum resolution, Pin to… and the
+  update offer open as a sheet inside the app.
+- Android: "Every" shows its number again and is picked from a list.
 - A fresh install no longer changes the wallpaper by itself. Changing it
   automatically is off until you switch it on in Settings.
 - The update offer now shows what changed — every release since the one

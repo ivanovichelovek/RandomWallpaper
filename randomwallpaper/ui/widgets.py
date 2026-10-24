@@ -298,6 +298,45 @@ class Picker(QComboBox):
             self.activated.emit(index)
 
 
+class NumberPicker(Picker):
+    """A spin box's API over a Picker of numbers — what a phone gets
+    instead of a QSpinBox, which there showed no digits and wanted the
+    keyboard. A long range becomes a short list of round steps."""
+    valueChanged = Signal(int)
+    ROUND = (15, 20, 30, 45, 60, 90, 120, 180, 240, 360, 480, 720)
+
+    def __init__(self):
+        super().__init__()
+        self.values = []
+        self.step = 1
+        self.currentIndexChanged.connect(
+            lambda i: self.valueChanged.emit(self.values[i]) if 0 <= i < len(self.values) else None)
+
+    def setSingleStep(self, step):
+        self.step = step
+
+    def setRange(self, low, high):
+        values = list(range(low, high + 1))
+        if len(values) > 30:
+            values = [v for v in self.ROUND if low <= v <= high] or [low]
+        keep = self.value() if self.values else low
+        self.values = values
+        self.blockSignals(True)
+        self.clear()
+        self.addItems([str(v) for v in values])
+        self.blockSignals(False)
+        self.setValue(keep)
+
+    def value(self):
+        i = self.currentIndex()
+        return self.values[i] if 0 <= i < len(self.values) else 0
+
+    def setValue(self, value):
+        if self.values:
+            nearest = min(range(len(self.values)), key=lambda i: abs(self.values[i] - value))
+            self.setCurrentIndex(nearest)
+
+
 class Sheet(QFrame):
     """A card at the bottom of the window over a dimmed rest of it — what a
     phone uses for menus, pickers and questions.
