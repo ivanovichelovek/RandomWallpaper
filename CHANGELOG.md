@@ -18,6 +18,12 @@ the app shows when it offers that update.
   300 pictures it showed, on every source. A small pool goes round all of
   them before one comes back.
 - Random sources are no longer answered from the day-long cache.
+- Skip no longer shows "Dropped …": the next picture coming up says enough.
+  Other messages now show at the top and let taps through, so they never
+  cover Skip, Keep or Set.
+- Android: Keep (or Set) no longer throws away the pictures already
+  downloaded on the Random tab. Setting a wallpaper makes Android restart
+  the app, and the reel now comes back as it was.
 
 ## 1.4.2
 

@@ -251,6 +251,30 @@ class ReelPage(QWidget):
     def current(self):
         return self.frames[self.index] if self.index < len(self.frames) else None
 
+    # ── across Android's restart ─────────────────────────────────────────
+    # Setting a wallpaper on Android 12+ restarts the whole app (see
+    # Reel._remember_for_restart). The frames are files in the cache and
+    # outlive it; this is what lets the reel pick them up again rather than
+    # starting over with fresh downloads.
+    def export_frames(self):
+        keep = []
+        for frame in self.frames:
+            entry = {k: v for k, v in frame.items() if k != "thumb"}
+            entry["path"] = str(frame["path"])
+            keep.append(entry)
+        return {"frames": keep, "index": self.index}
+
+    def restore_frames(self, saved):
+        frames = [dict(f, path=Path(f["path"])) for f in saved.get("frames", [])
+                  if f.get("path") and Path(f["path"]).exists()]
+        if not frames:
+            return
+        known = {f["name"] for f in frames}
+        # Whatever arrived since the restart goes after them.
+        self.frames = frames + [f for f in self.frames if f["name"] not in known]
+        self.index = max(0, min(int(saved.get("index", 0)), len(self.frames) - 1))
+        self.sync()
+
     def go(self, index):
         if 0 <= index < len(self.frames):
             self.index = index
@@ -305,7 +329,7 @@ class ReelPage(QWidget):
         except OSError:
             pass
         self.frames.pop(self.index)
-        self.window_.show_toast(f"Dropped  {frame['name']}")
+        # Nothing said: the next frame coming up is the answer.
         self.advance()
 
     def filters_changed(self):

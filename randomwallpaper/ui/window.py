@@ -185,9 +185,12 @@ class Reel(QMainWindow):
         self.pages.addWidget(self.settings)
         self._paint_icons(style.theme.t)
 
-        # ── toast: floats over the page, near the bottom ────────────────
+        # ── toast: floats over the top of the page ──────────────────────
+        # At the top, and never in the way of a press: at the bottom it sat
+        # over Skip and Keep, and swallowed the next tap on them.
         self.toast = QLabel(central)
         self.toast.setObjectName("toast")
+        self.toast.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.toast.setAlignment(Qt.AlignCenter)
         self.toast.setWordWrap(True)
         self.toast.hide()
@@ -265,7 +268,8 @@ class Reel(QMainWindow):
         try:
             core.CACHE_DIR.mkdir(parents=True, exist_ok=True)
             self.RESUME_FILE.write_text(json.dumps(
-                {"at": time.time(), "tab": self.current_tab(), "toast": message}))
+                {"at": time.time(), "tab": self.current_tab(), "toast": message,
+                 "reel": self.reel_page.export_frames()}))
         except OSError:
             pass
 
@@ -279,6 +283,8 @@ class Reel(QMainWindow):
             return
         if time.time() - note.get("at", 0) > 60:
             return
+        if note.get("reel"):
+            self.reel_page.restore_frames(note["reel"])
         self.show_tab(int(note.get("tab", 0)))
         if note.get("toast"):
             QTimer.singleShot(300, lambda: self.show_toast(note["toast"]))
@@ -349,9 +355,8 @@ class Reel(QMainWindow):
         width = min(520, area.width() - 32)
         self.toast.setFixedWidth(width)
         self.toast.adjustSize()
-        bottom = 96 if IS_ANDROID else 24
         self.toast.move((area.width() - width) // 2 + (0 if IS_ANDROID else 34),
-                        area.height() - self.toast.height() - bottom)
+                        12 if IS_ANDROID else 16)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
