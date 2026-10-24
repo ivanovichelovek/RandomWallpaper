@@ -582,7 +582,10 @@ class SettingsPage(QWidget):
         else:
             hint = ("Mixed; untick Anime below for photographs only. Filters "
                     "apply server-side.")
-        if not core.source_serves(source, theme):
+        if source == "konachan" and self.prefs.get("orientation") == "portrait":
+            hint += ("  Konachan has no portrait pictures, so with Portrait "
+                     "the frames come from Wallhaven.")
+        elif not core.source_serves(source, theme):
             other = next(label for label, key, _ in core.SOURCES
                          if core.source_serves(key, theme))
             hint += (f"  {core.theme_label(theme)} is not in this catalogue at "

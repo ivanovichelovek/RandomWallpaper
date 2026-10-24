@@ -3,6 +3,19 @@
 Each release's section is published as its GitHub release text, and is what
 the app shows when it offers that update.
 
+## 1.4.2
+
+- Portrait works. The minimum resolution now turns upright with it, so
+  1920×1080 means 1080 wide and 1920 tall. Konachan has no portrait
+  pictures at all, so with Portrait the pictures come from Wallhaven, and
+  Settings says so.
+- Android: every tab fits screens down to 240 dp wide, and landscape too.
+  Saved's buttons stack when two by two does not fit, and Theme no longer
+  shows a cut-off name in landscape.
+- Android 1.4.0 crashed at start as soon as a newer version was out: its
+  update offer opened a window of its own. 1.4.1 fixed that. If you still
+  have 1.4.0, install the 1.4.1 or later APK by hand once.
+
 ## 1.4.1
 
 - Android: the Settings tab fits the phone's width. Rows that do not fit

@@ -470,10 +470,16 @@ def _get_json(url, ttl=API_CACHE_TTL):
 
 
 def _min_size(prefs):
+    """The minimum as (width, height), turned to stand upright for portrait:
+    1920×1080 means a picture at least 1080 wide and 1920 tall then, not
+    one that is somehow 1920 wide and still taller than it is wide."""
     if not prefs["minimum"]:
         return 0, 0
     w, _, h = prefs["minimum"].partition("x")
-    return int(w), int(h)
+    w, h = int(w), int(h)
+    if prefs.get("orientation") == "portrait":
+        return min(w, h), max(w, h)
+    return w, h
 
 
 def _fits(prefs, width, height):
@@ -610,7 +616,7 @@ def pick_wallhaven(prefs):
         # than one word — "christmas" and "new year" are different pictures.
         params["q"] = random.choice(queries)
     if prefs["minimum"]:
-        params["atleast"] = prefs["minimum"]
+        params["atleast"] = "%dx%d" % _min_size(prefs)
     if prefs["orientation"] == "landscape":
         params["ratios"] = "16x9,16x10,21x9"
     elif prefs["orientation"] == "portrait":
@@ -676,6 +682,11 @@ def effective_source(prefs):
     """
     chosen = source_key(prefs["source"])
     theme = theme_key(prefs)
+    if chosen == "konachan" and prefs.get("orientation") == "portrait":
+        # konachan is a desktop-wallpaper board: in samples of hundreds of
+        # its posts not one stood upright, so a portrait reel from it is an
+        # empty reel.
+        return "wallhaven"
     if source_serves(chosen, theme):
         return chosen
     return next((key for _, key, _ in SOURCES if source_serves(key, theme)),

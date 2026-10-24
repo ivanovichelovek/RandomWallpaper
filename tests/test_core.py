@@ -163,6 +163,19 @@ check("easter falls through to wallhaven",
 check("a theme konachan does serve stays on konachan",
       rw.effective_source(dict(rw.DEFAULTS, source="konachan", theme="winter"))
       == "konachan")
+
+# Portrait: konachan has none, and the minimum stands upright.
+check("portrait borrows wallhaven: konachan has no upright pictures",
+      rw.effective_source(dict(rw.DEFAULTS, source="konachan", orientation="portrait"))
+      == "wallhaven")
+upright = dict(rw.DEFAULTS, orientation="portrait", minimum="1920x1080")
+check("a portrait minimum of 1920x1080 means 1080 wide, 1920 tall",
+      rw._min_size(upright) == (1080, 1920))
+check("so a 1080x1920 picture fits it",
+      rw._fits(upright, 1080, 1920) and not rw._fits(upright, 1920, 1080))
+check("landscape keeps the minimum as written",
+      rw._min_size(dict(rw.DEFAULTS, orientation="landscape", minimum="1920x1080"))
+      == (1920, 1080))
 try:
     rw.pick_konachan(dict(rw.DEFAULTS, theme="easter"))
     check("konachan says why it cannot serve easter", False)
