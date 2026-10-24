@@ -179,12 +179,39 @@ def tour(win):
         ("other-random", lambda: (flip(), win.show_tab(0))),
         ("other-saved", lambda: win.show_tab(1)),
         ("other-settings", settings_to(0)),
+        # The drop-downs, opened and picked from the way a tap would.
+        ("combo-theme-open", lambda: open_combo(win.settings.theme)),
+        ("combo-theme-picked", lambda: pick_combo(win.settings.theme, 5)),
+        ("combo-orientation-open", lambda: open_combo(win.settings.orientation)),
+        ("combo-orientation-picked", lambda: pick_combo(win.settings.orientation, 1)),
         # The rotation's job, switched on the way Settings does it.
         ("schedule", lambda: schedule_rotation()),
         # The in-app update's last step, on the build itself: Android's
         # "update this app?" screen should be on top for the screenshot.
         ("update-installer", lambda: try_installer()),
     ]
+
+    def open_combo(combo):
+        settings_to(0)()
+        win.settings.findChild(QScrollArea).ensureWidgetVisible(combo)
+        print(f"rw-tour: opening {combo.currentText()!r}", flush=True)
+        combo.showPopup()
+        print("rw-tour: opened", flush=True)
+
+    def pick_combo(combo, index):
+        from PySide6.QtCore import QEvent, QPointF, Qt
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtWidgets import QApplication
+        view = combo.view()
+        rect = view.visualRect(view.model().index(index, 0))
+        at = QPointF(rect.center())
+        print(f"rw-tour: tapping row {index} at {rect.center()}", flush=True)
+        for kind in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            QApplication.sendEvent(view.viewport(), QMouseEvent(
+                kind, at, view.viewport().mapToGlobal(at), Qt.LeftButton,
+                Qt.LeftButton if kind == QEvent.MouseButtonPress else Qt.NoButton,
+                Qt.NoModifier))
+        print(f"rw-tour: picked {combo.currentText()!r}", flush=True)
 
     def schedule_rotation():
         from randomwallpaper import schedule
