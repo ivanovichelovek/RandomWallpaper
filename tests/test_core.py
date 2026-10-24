@@ -1141,11 +1141,35 @@ payload = b"the new version" * 1000
 (rel / "SHA256SUMS").write_text(f"{hashlib.sha256(payload).hexdigest()}  pkg.deb\n")
 (rel / "latest.json").write_text(json.dumps({
     "tag_name": "v99.0.0", "html_url": "https://example.invalid/r",
+    "body": "- the newest thing\n",
     "assets": [{"name": n, "browser_download_url": (rel / n).as_uri()}
                for n in ("pkg.deb", "SHA256SUMS")]}))
 release, newer = update.check((rel / "latest.json").as_uri())
 check("the feed is read and a higher version is newer",
       release["version"] == "99.0.0" and newer)
+check("the release's notes come with it", release["notes"] == "- the newest thing")
+
+# The release workflow publishes this version's CHANGELOG.md section as the
+# release text, and refuses to publish without one.
+changelog = (Path(__file__).resolve().parent.parent / "CHANGELOG.md").read_text()
+check("CHANGELOG.md has a section for this version",
+      f"\n## {__import__('randomwallpaper').__version__}\n" in changelog)
+
+(rel / "list.json").write_text(json.dumps([
+    {"tag_name": "v99.0.0", "body": "- the newest thing"},
+    {"tag_name": "v98.1.0", "body": "- a skipped one", "prerelease": True},
+    {"tag_name": "v98.0.0", "body": "- the one before"},
+    {"tag_name": "v1.0.0", "body": "- long since installed"}]))
+notes = update.notes_since(release, (rel / "list.json").as_uri(), running="2.0.0")
+check("notes cover every release since the running one, newest first",
+      notes.index("## 99.0.0") < notes.index("## 98.0.0") < notes.index("the one before"))
+check("but not the running version's own, nor a pre-release",
+      "long since" not in notes and "skipped" not in notes)
+check("one release behind: just that release's notes",
+      update.notes_since(release, (rel / "list.json").as_uri(), running="98.0.0")
+      == "- the newest thing")
+check("an unreadable list falls back to the latest's notes",
+      update.notes_since(release, (rel / "nope.json").as_uri()) == "- the newest thing")
 
 seen_progress = []
 got = update.download(release, "pkg.deb", FAKE,

@@ -15,9 +15,9 @@ and `QMenu` directly.
 import colorsys
 from pathlib import Path
 
-from PySide6.QtCore import QRectF, QSize, Qt
-from PySide6.QtGui import QColor, QPainter, QPalette
-from PySide6.QtWidgets import QCheckBox
+from PySide6.QtCore import QEvent, QObject, QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QPainter, QPalette, QPen
+from PySide6.QtWidgets import QAbstractButton, QApplication, QCheckBox
 
 from ..paths import IS_ANDROID
 
@@ -162,7 +162,7 @@ QToolTip {{ background: {t['surface']}; color: {t['fg']}; border: 1px solid {t['
 QToolButton.nav {{
     background: transparent;
     color: {t['dim']};
-    border: none;
+    border: 2px solid transparent;
     border-radius: 24px;
     padding: 0;
 }}
@@ -171,7 +171,8 @@ QToolButton.nav:checked {{ background: {t['accentSoft']}; color: {t['accentText'
 QToolButton.navBottom {{
     background: transparent;
     color: {t['dim']};
-    border: none;
+    border: 2px solid transparent;
+    border-radius: 14px;
     padding: 4px 0;
     font-size: 12px;
 }}
@@ -212,9 +213,9 @@ QFrame.picture {{ background: {t['surface']}; border-radius: 20px; }}
 QPushButton {{
     background: {t['well']};
     color: {t['fg']};
-    border: none;
+    border: 2px solid transparent;
     border-radius: 14px;
-    padding: 8px 16px;
+    padding: 6px 14px;
     min-height: 20px;
     font-weight: 600;
 }}
@@ -237,13 +238,18 @@ QPushButton.seg {{
     background: transparent;
     color: {t['dim']};
     border-radius: 12px;
-    padding: 5px 12px;
+    padding: 3px 10px;
     min-height: 18px;
     font-weight: 500;
 }}
 QPushButton.seg:hover {{ color: {t['fg']}; }}
 QPushButton.seg:checked {{ background: {t['surface']}; color: {t['fg']}; font-weight: 700; }}
 QFrame.segmented[strong="true"] QPushButton.seg:checked {{ background: {t['accent']}; color: {t['onAccent']}; }}
+
+/* where the keyboard is: see FocusRing */
+QPushButton[kbfocus="true"], QToolButton[kbfocus="true"] {{ border-color: {t['fg']}; }}
+QRadioButton[kbfocus="true"]::indicator, QCheckBox[kbfocus="true"]::indicator {{ border-color: {t['fg']}; }}
+QFrame.choice[kbfocus="true"] {{ border-color: {t['fg']}; }}
 
 /* a radio card: the whole card is the choice */
 QFrame.choice {{ background: transparent; border: 2px solid {t['border']}; border-radius: 14px; }}
@@ -261,6 +267,11 @@ QLineEdit, QSpinBox {{
     selection-color: {t['onAccent']};
 }}
 QLineEdit:focus, QSpinBox:focus {{ border-color: {t['accent']}; }}
+QTextBrowser {{
+    background: {t['well']}; color: {t['fg']};
+    border: 1px solid transparent; border-radius: 12px; padding: 6px 10px;
+}}
+QTextBrowser:focus {{ border-color: {t['accent']}; }}
 QLineEdit#search {{ border-radius: 16px; padding: 7px 14px; }}
 QSpinBox::up-button, QSpinBox::down-button {{ width: 0; border: none; }}
 QComboBox {{
@@ -433,10 +444,81 @@ def apply(app, prefs=None):
     theme.prefs = prefs
     theme.applied = None
     theme.apply()
+    if not hasattr(app, "_focus_ring"):
+        app._focus_ring = FocusRing(app)
     try:
         app.styleHints().colorSchemeChanged.connect(lambda *_: theme.apply())
     except AttributeError:
         pass
+
+
+# ── the keyboard ────────────────────────────────────────────────────────────
+class FocusRing(QObject):
+    """Where the focus is, shown only to someone using the keyboard — what a
+    browser's :focus-visible does.
+
+    A ring after every click on a button is noise, so the ring appears once
+    Tab or an arrow key is pressed and goes away at the next mouse press or
+    touch. The focused widget gets the property kbfocus=true, which the
+    stylesheet draws; a radio inside a choice card marks the card, since its
+    own circle is all it has.
+
+    Enter (or Return) on a focused button presses it, as Space does: outside
+    a dialog Qt gives a plain button no default action for Enter.
+    """
+    KEYS = {Qt.Key_Tab, Qt.Key_Backtab, Qt.Key_Left, Qt.Key_Right, Qt.Key_Up,
+            Qt.Key_Down, Qt.Key_Home, Qt.Key_End, Qt.Key_PageUp, Qt.Key_PageDown}
+
+    def __init__(self, app):
+        super().__init__(app)
+        self.keyboard = False
+        self.marked = []
+        app.installEventFilter(self)
+        app.focusChanged.connect(lambda *_: self.mark())
+
+    def eventFilter(self, watched, event):
+        kind = event.type()
+        if kind == QEvent.KeyPress:
+            if event.key() in self.KEYS and not self.keyboard:
+                self.keyboard = True
+                self.mark()
+            if (event.key() in (Qt.Key_Return, Qt.Key_Enter)
+                    and isinstance(watched, QAbstractButton)
+                    and watched is QApplication.focusWidget()
+                    and watched.isEnabled() and not event.isAutoRepeat()):
+                self.keyboard = True
+                watched.animateClick()
+                return True
+        elif kind in (QEvent.MouseButtonPress, QEvent.TouchBegin) and self.keyboard:
+            self.keyboard = False
+            self.mark()
+        return False
+
+    def mark(self):
+        for widget in self.marked:
+            try:
+                _set_ring(widget, False)
+            except RuntimeError:            # deleted since
+                pass
+        self.marked = []
+        focus = QApplication.focusWidget()
+        if not self.keyboard or focus is None:
+            return
+        self.marked = [focus]
+        card = focus.parentWidget()
+        if card is not None and card.property("class") == "choice":
+            self.marked.append(card)
+        for widget in self.marked:
+            _set_ring(widget, True)
+
+
+def _set_ring(widget, on):
+    if bool(widget.property("kbfocus")) == on:
+        return
+    widget.setProperty("kbfocus", on)
+    widget.style().unpolish(widget)
+    widget.style().polish(widget)
+    widget.update()
 
 
 # ── controls Qt does not have ───────────────────────────────────────────────
@@ -449,7 +531,7 @@ class Switch(QCheckBox):
         self.setCursor(Qt.PointingHandCursor)
 
     def sizeHint(self):
-        return QSize(46, 28)
+        return QSize(50, 32)
 
     def minimumSizeHint(self):
         return self.sizeHint()
@@ -460,9 +542,13 @@ class Switch(QCheckBox):
     def paintEvent(self, _event):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-        r = QRectF(1, (self.height() - 26) / 2, 44, 26)
+        r = QRectF(3, (self.height() - 26) / 2, 44, 26)
         on = self.isChecked()
         pal = self.palette()
+        if self.property("kbfocus"):
+            p.setPen(QPen(pal.color(QPalette.WindowText), 2))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(r.adjusted(-2, -2, 2, 2), 15, 15)
         track = QColor(pal.color(QPalette.Highlight) if on else pal.color(QPalette.Mid))
         if not self.isEnabled():
             track.setAlpha(110)

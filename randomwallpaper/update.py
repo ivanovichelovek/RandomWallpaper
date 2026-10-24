@@ -39,6 +39,7 @@ from . import __version__
 
 REPO = "ivanovichelovek/RandomWallpaper"
 RELEASES_URL = f"https://api.github.com/repos/{REPO}/releases/latest"
+RELEASES_LIST_URL = f"https://api.github.com/repos/{REPO}/releases?per_page=30"
 USER_AGENT = f"RandomWallpaper/{__version__} (+https://github.com/{REPO})"
 TIMEOUT = 30
 
@@ -178,7 +179,9 @@ def _get(url, accept="application/json"):
 
 
 def latest_release(url=None):
-    """{"version", "tag", "url", "assets": {name: download_url}}.
+    """{"version", "tag", "url", "notes", "assets": {name: download_url}}.
+
+    `notes` is the release's own text — its section of CHANGELOG.md.
 
     /releases/latest already leaves out drafts and pre-releases.
     RANDOM_WALLPAPER_RELEASES_URL points it at a stand-in feed, which is how
@@ -201,6 +204,7 @@ def latest_release(url=None):
         "version": ".".join(str(n) for n in parse_version(tag)),
         "tag": tag,
         "url": data.get("html_url") or f"https://github.com/{REPO}/releases",
+        "notes": (data.get("body") or "").strip(),
         "assets": {a["name"]: a["browser_download_url"]
                    for a in data.get("assets", [])
                    if "name" in a and "browser_download_url" in a},
@@ -214,6 +218,38 @@ def check(url=None):
 
 
 # ── fetching it ─────────────────────────────────────────────────────────────
+def notes_since(release, url=None, running=None):
+    """What changed between the running version and `release`, as Markdown.
+
+    Someone two releases behind gets both releases' notes, newest first, not
+    only the latest's. Should the list of releases not be readable, the
+    latest's own notes are all there is to show.
+    """
+    running = parse_version(running or __version__)
+    url = url or os.environ.get("RANDOM_WALLPAPER_RELEASES_LIST_URL") or RELEASES_LIST_URL
+    try:
+        with _get(url) as response:
+            listed = json.loads(response.read().decode("utf-8"))
+    except (OSError, ValueError):
+        listed = None
+    if not isinstance(listed, list):
+        return release.get("notes", "")
+    target = parse_version(release["version"])
+    picked = []
+    for item in listed:
+        if not isinstance(item, dict) or item.get("draft") or item.get("prerelease"):
+            continue
+        version = parse_version(item.get("tag_name") or "")
+        if running < version <= target:
+            picked.append((version, (item.get("body") or "").strip()))
+    picked.sort(reverse=True)
+    if len(picked) <= 1:
+        return release.get("notes", "") or (picked[0][1] if picked else "")
+    return "\n\n".join(
+        f"## {'.'.join(map(str, version))}\n\n{body or '—'}"
+        for version, body in picked)
+
+
 def parse_sums(text):
     """SHA256SUMS as {file name: hex digest}. Accepts `sha256sum` output in
     both its text and binary (`*name`) forms."""

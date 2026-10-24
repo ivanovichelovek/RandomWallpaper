@@ -10,15 +10,53 @@ from datetime import date, datetime
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QBoxLayout, QButtonGroup, QCheckBox, QFrame, QGridLayout, QHBoxLayout,
-    QLabel, QLineEdit, QMessageBox, QPushButton, QRadioButton, QScrollArea,
-    QSpinBox, QVBoxLayout, QWidget,
+    QBoxLayout, QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QFrame,
+    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+    QRadioButton, QScrollArea, QSpinBox, QTextBrowser, QVBoxLayout, QWidget,
 )
 
 from .. import __version__, core, schedule, update
 from ..paths import IS_ANDROID
 from .style import Switch, theme as look, touch_scroll
 from .widgets import Choice, Segmented, card, label, repolish, row, rule, titled
+
+
+class _UpdateDialog(QDialog):
+    """A newer release, what changed in it, and whether to install it now."""
+
+    def __init__(self, parent, release):
+        super().__init__(parent)
+        self.setWindowTitle("Update available")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 16)
+        layout.setSpacing(10)
+        layout.addWidget(label(
+            f"Random Wallpaper {release['version']} is available — "
+            f"this is {__version__}.", "title", wrap=True))
+        notes = QTextBrowser()
+        notes.setOpenExternalLinks(True)
+        notes.setMarkdown(release.get("changes") or release.get("notes")
+                          or f"No notes came with this release — see "
+                             f"[the release page]({release['url']}).")
+        touch_scroll(notes)
+        layout.addWidget(notes, 1)
+        layout.addWidget(label(
+            "Install it now? The app restarts when it is done. Checking at "
+            "startup can be turned off in Settings.", "help", wrap=True))
+        buttons = QDialogButtonBox()
+        later = buttons.addButton("Later", QDialogButtonBox.RejectRole)
+        install = buttons.addButton("Update", QDialogButtonBox.AcceptRole)
+        install.setProperty("class", "accent")
+        install.setDefault(True)
+        later.setAutoDefault(False)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        install.setFocus()
+        if IS_ANDROID:
+            self.setWindowState(Qt.WindowMaximized)
+        else:
+            self.resize(520, 440)
 
 
 class _Columns(QWidget):
@@ -355,6 +393,11 @@ class SettingsPage(QWidget):
         self.check_updates.setChecked(prefs["check_updates"])
         self.check_updates.toggled.connect(self.apply)
         app.addWidget(row(label("Look for updates when the app opens"), self.check_updates))
+        if not IS_ANDROID:
+            keys = QPushButton("Show shortcuts")
+            keys.clicked.connect(lambda: self.win.show_keys())
+            keys_box, _ = titled("Keyboard", "Everything here works from the keyboard — F1 lists the keys.")
+            app.addWidget(row(keys_box, keys))
         self._release = None
         if update.install_kind() == "source":
             # Nothing here can replace a git checkout or a uv/pip install;
@@ -798,6 +841,8 @@ class SettingsPage(QWidget):
                 error = None
             except update.UpdateError as exc:
                 release, newer, error = None, False, str(exc)
+            if newer:
+                release["changes"] = update.notes_since(release)
 
             def done():
                 self.update_button.setEnabled(True)
@@ -811,10 +856,7 @@ class SettingsPage(QWidget):
                         f"source, so update it the way it was installed: "
                         f"git pull, or uv tool upgrade randomwallpaper.")
                 else:
-                    self._release = release
-                    self.update_button.setText(f"Update to {release['version']}")
-                    self._say_update(f"{release['version']} is available — "
-                                     f"{release['url']}")
+                    self._offer(release)
             win.post_to_ui(done)
 
         threading.Thread(target=work, daemon=True).start()
@@ -836,6 +878,7 @@ class SettingsPage(QWidget):
             except update.UpdateError:
                 return
             if newer:
+                release["changes"] = update.notes_since(release)
                 win.post_to_ui(lambda: self._offer(release))
 
         threading.Thread(target=work, daemon=True).start()
@@ -846,19 +889,7 @@ class SettingsPage(QWidget):
         self._release = release
         self.update_button.setText(f"Update to {release['version']}")
         self._say_update(f"{release['version']} is available — {release['url']}")
-        box = QMessageBox(self.win)
-        box.setIcon(QMessageBox.Information)
-        box.setWindowTitle("Update available")
-        box.setText(f"Random Wallpaper {release['version']} is available — "
-                    f"this is {__version__}.")
-        box.setInformativeText("Install it now? The app restarts when it is "
-                               "done. Checking at startup can be turned off "
-                               "in Settings.")
-        install = box.addButton("Update", QMessageBox.AcceptRole)
-        box.addButton("Later", QMessageBox.RejectRole)
-        box.setDefaultButton(install)
-        box.exec()
-        if box.clickedButton() is install:
+        if _UpdateDialog(self.win, release).exec() == QDialog.Accepted:
             self.win.show_tab(2)
             self.install_update()
 

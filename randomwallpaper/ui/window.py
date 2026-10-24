@@ -8,8 +8,10 @@ import subprocess
 from PySide6.QtCore import QByteArray, QEvent, QSize, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
-    QAbstractButton, QApplication, QButtonGroup, QComboBox, QHBoxLayout,
-    QLabel, QMainWindow, QStackedWidget, QToolButton, QVBoxLayout, QWidget,
+    QAbstractButton, QAbstractItemView, QAbstractSpinBox, QApplication,
+    QButtonGroup, QComboBox, QDialog, QDialogButtonBox, QGridLayout,
+    QHBoxLayout, QLabel, QLineEdit, QMainWindow, QRadioButton, QStackedWidget,
+    QTextEdit, QToolButton, QVBoxLayout, QWidget,
 )
 
 from .. import core
@@ -32,6 +34,31 @@ _CYRILLIC_TWINS = {
     Qt.Key_Q: "Й",   # Й
     Qt.Key_A: "Ф",   # Ф
 }
+
+# What F1 lists. Keep it in step with Reel._install_shortcuts.
+KEYS = [
+    ("Anywhere", [
+        ("1  2  3", "Random, Saved, Settings"),
+        ("Tab  Shift+Tab", "Move between controls"),
+        ("Space  Enter", "Press the focused button"),
+        ("Arrows", "Pick in a row of choices; move between saved pictures"),
+        ("Ctrl+F  /", "Search the saved pictures"),
+        ("F1  ?", "This list"),
+        ("Esc  Q", "Quit (Esc leaves the search box first)"),
+    ]),
+    ("Random", [
+        ("S  Enter", "Keep this one"),
+        ("D  Delete", "Skip it"),
+        ("Right  N  Space", "Next"),
+        ("Left  P", "Previous"),
+    ]),
+    ("Saved", [
+        ("Space", "Pick or unpick the tile"),
+        ("Enter", "Set it as the wallpaper"),
+        ("Ctrl+A", "Pick all"),
+        ("D  Delete", "Delete the picked ones"),
+    ]),
+]
 
 # The three sections: their names, and their icons as stroke SVG drawn in
 # whatever colour the theme gives the button.
@@ -300,6 +327,7 @@ class Reel(QMainWindow):
     def show_tab(self, index):
         self.pages.setCurrentIndex(index)
         self.nav_buttons[index].setChecked(True)
+        self._refresh_shortcuts()
         if index == 1:
             self.library.reload()
         elif index == 2:
@@ -335,65 +363,110 @@ class Reel(QMainWindow):
 
     # ── input ────────────────────────────────────────────────────────────
     def _install_shortcuts(self):
-        self._contextual_shortcuts = []
+        # (shortcut, groups): "reel" is on only while the Random tab is the
+        # one showing, so its keys are left to the other tabs; "activation"
+        # (Space, Return) and "arrow" give way to a focused control that
+        # uses those keys itself. See _refresh_shortcuts.
+        self._shortcuts = []
         for i, key in enumerate((Qt.Key_1, Qt.Key_2, Qt.Key_3)):
-            self._bind(key, lambda i=i: self.show_tab(i))
-        self._bind(Qt.Key_Comma, lambda: self.show_tab(2))
+            self._bind(key, lambda i=i: self.show_tab(i), "typing")
+        self._bind(Qt.Key_Comma, lambda: self.show_tab(2), "typing")
         self._bind(Qt.Key_F2, lambda: self.show_tab(2))
         self._bind(Qt.Key_Q, self.close)
         self._bind(Qt.Key_Escape, self._escape)
+        self._bind(Qt.Key_F1, self.show_keys)
+        self._bind("?", self.show_keys, "typing")
+        self._bind("Ctrl+F", self._find)
+        self._bind("/", self._find, "typing")
 
-        self._bind(Qt.Key_S, self._save)
-        self._bind(Qt.Key_Return, self._save, contextual=True)
+        self._bind(Qt.Key_S, self._save, "reel")
+        self._bind(Qt.Key_Return, self._save, "reel", "activation")
         self._bind(Qt.Key_D, self._delete)
         self._bind(Qt.Key_Delete, self._delete)
-        self._bind(Qt.Key_Right, lambda: self._nav(1))
-        self._bind(Qt.Key_N, lambda: self._nav(1))
-        self._bind(Qt.Key_Space, lambda: self._nav(1), contextual=True)
-        self._bind(Qt.Key_Left, lambda: self._nav(-1))
-        self._bind(Qt.Key_P, lambda: self._nav(-1))
+        self._bind(Qt.Key_Right, lambda: self._nav(1), "reel", "arrow")
+        self._bind(Qt.Key_N, lambda: self._nav(1), "reel")
+        self._bind(Qt.Key_Space, lambda: self._nav(1), "reel", "activation")
+        self._bind(Qt.Key_Left, lambda: self._nav(-1), "reel", "arrow")
+        self._bind(Qt.Key_P, lambda: self._nav(-1), "reel")
 
         app = QApplication.instance()
         if app is not None:
-            app.focusChanged.connect(self._on_focus_changed)
+            # A bound slot, so it goes with the window instead of outliving it.
+            app.focusChanged.connect(self._refresh_shortcuts)
+        self._refresh_shortcuts()
 
-    def _bind(self, key, handler, contextual=False):
-        sc = QShortcut(QKeySequence(key), self)
-        sc.setContext(Qt.ApplicationShortcut)
-        sc.activated.connect(lambda: self._dispatch(handler))
-        if contextual:
-            self._contextual_shortcuts.append(sc)
+    def _bind(self, key, handler, *groups):
+        keys = [key]
         twin = _CYRILLIC_TWINS.get(key)
         if twin:
-            sc2 = QShortcut(QKeySequence(twin), self)
-            sc2.setContext(Qt.ApplicationShortcut)
-            sc2.activated.connect(lambda: self._dispatch(handler))
-            if contextual:
-                self._contextual_shortcuts.append(sc2)
+            keys.append(twin)
+        for k in keys:
+            sc = QShortcut(QKeySequence(k), self)
+            sc.setContext(Qt.ApplicationShortcut)
+            sc.activated.connect(handler)
+            self._shortcuts.append((sc, set(groups)))
 
-    def _dispatch(self, handler):
-        # A QLineEdit already claims every ordinary key for itself before a
-        # global QShortcut ever sees it (Qt's own ShortcutOverride handling),
-        # so typing "s" in the API-key box safely types "s" and never reaches
-        # here. Space and Return are the ones Qt does *not* protect this way
-        # — a QShortcut for either steals the key before a focused button or
-        # checkbox can react to it — and those are handled by disabling their
-        # shortcuts outright while such a widget has focus; see
-        # _on_focus_changed.
-        handler()
+    @Slot()
+    def _refresh_shortcuts(self, *_):
+        """Which shortcuts are live, for the tab showing and the focus.
 
-    def _on_focus_changed(self, _old, new):
-        """Space and Return are ordinary activation keys for a button, a
-        checkbox, a combo box — and a global QShortcut for either steals the
-        key before the focused widget's own handling ever runs. Disabling
-        those two shortcuts while such a widget has focus is what lets Tab
-        and Space still operate the Settings tab's controls, and what keeps
-        this from regressing the original's "Space picks a tile" behaviour
-        once a button below the grid has focus.
+        A QLineEdit already claims every ordinary key for itself before a
+        global QShortcut sees it (Qt's ShortcutOverride), so typing "s" in
+        the search box types "s". Nothing else is protected that way:
+        Space and Return would never reach a focused button or checkbox, the
+        arrows never reach a segmented control, a combo box or the Saved
+        grid, and digits never reach the spin box — so those shortcuts are
+        switched off while such a widget has the focus.
         """
-        interactive = isinstance(new, (QAbstractButton, QComboBox))
-        for sc in self._contextual_shortcuts:
-            sc.setEnabled(not interactive)
+        if not hasattr(self, "_shortcuts"):
+            return
+        focus = QApplication.focusWidget()
+        activation = isinstance(focus, (QAbstractButton, QComboBox))
+        arrow = (isinstance(focus, (QComboBox, QAbstractSpinBox, QAbstractItemView,
+                                    QTextEdit, QRadioButton, QLineEdit))
+                 or (isinstance(focus, QAbstractButton)
+                     and focus.property("class") == "seg"))
+        typing = isinstance(focus, (QAbstractSpinBox, QLineEdit, QTextEdit))
+        on_reel = self.current_tab() == 0
+        for sc, groups in self._shortcuts:
+            sc.setEnabled(not ("reel" in groups and not on_reel)
+                          and not ("activation" in groups and activation)
+                          and not ("arrow" in groups and arrow)
+                          and not ("typing" in groups and typing))
+
+    def _find(self):
+        self.show_tab(1)
+        self.library.search.setFocus(Qt.ShortcutFocusReason)
+        self.library.search.selectAll()
+
+    def show_keys(self):
+        """F1 or ?: every shortcut, in one place."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Keyboard shortcuts")
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 18, 20, 16)
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(18)
+        grid.setVerticalSpacing(6)
+        row = 0
+        for heading, keys in KEYS:
+            title = QLabel(heading)
+            title.setProperty("class", "h2")
+            grid.addWidget(title, row, 0, 1, 2)
+            row += 1
+            for combo, what in keys:
+                key = QLabel(combo)
+                key.setProperty("class", "mono")
+                grid.addWidget(key, row, 0, Qt.AlignTop)
+                text = QLabel(what)
+                text.setWordWrap(True)
+                grid.addWidget(text, row, 1)
+                row += 1
+        layout.addLayout(grid)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
 
     def _save(self):
         if self.current_tab() == 0:
@@ -414,6 +487,14 @@ class Reel(QMainWindow):
     def _escape(self):
         if self.current_tab() == 1 and self.library.asking():
             self.library.cancel_delete()
+            return
+        focus = QApplication.focusWidget()
+        if focus is self.library.search:
+            # Out of the search box: clear it first, then back to the tiles.
+            if focus.text():
+                focus.clear()
+            else:
+                self.library.list.setFocus(Qt.OtherFocusReason)
             return
         self.close()
 

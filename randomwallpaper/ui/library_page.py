@@ -18,7 +18,7 @@ from PySide6.QtGui import (
     QPainterPath, QPen, QPixmap,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QAbstractItemView, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMenu, QPushButton, QStackedWidget,
     QStyle, QStyledItemDelegate, QVBoxLayout, QWidget,
 )
@@ -121,7 +121,13 @@ class _TileDelegate(QStyledItemDelegate):
             painter.setPen(QPen(QColor(style.token("accent")), 3))
             painter.setBrush(Qt.NoBrush)
             painter.drawRoundedRect(rect.adjusted(-1, -1, 1, 1), RADIUS + 1, RADIUS + 1)
-        elif hover:
+        if (option.state & QStyle.State_HasFocus
+                and self.parent().property("kbfocus")):
+            # The keyboard's tile, picked or not: see style.FocusRing.
+            painter.setPen(QPen(QColor(style.token("fg")), 2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(rect.adjusted(-4, -4, 4, 4), RADIUS + 4, RADIUS + 4)
+        elif hover and not selected:
             painter.setPen(QPen(QColor(style.token("border")), 2))
             painter.setBrush(Qt.NoBrush)
             painter.drawRoundedRect(rect, RADIUS, RADIUS)
@@ -189,7 +195,7 @@ class LibraryPage(QWidget):
             root.setContentsMargins(4, 16, 16, 16)
         root.setSpacing(12)
 
-        # ── heading, search and the ★ filter ─────────────────────────────
+        # ── heading, search and what to show ─────────────────────────────
         head = QHBoxLayout()
         head.setSpacing(10)
         root.addLayout(head)
@@ -207,12 +213,18 @@ class LibraryPage(QWidget):
         else:
             self.search.setMaximumWidth(260)
             head.addWidget(self.search, 1)
-        self.shuffle_only = QPushButton("★ only")
-        self.shuffle_only.setCheckable(True)
-        self.shuffle_only.setProperty("class", "flat")
-        self.shuffle_only.setToolTip("Show only the wallpapers in the shuffle set")
-        self.shuffle_only.toggled.connect(self.apply_filter)
-        head.addWidget(self.shuffle_only)
+        # Everything, or only what is pinned to one category: the shuffle
+        # set, a season, a holiday — each with how many it holds.
+        self.show_only = QComboBox()
+        self.show_only.setToolTip("Show every wallpaper, or only the ones in "
+                                  "the shuffle set or pinned to a season or holiday")
+        self.show_only.addItem("All", None)
+        self.show_only.addItem(self._dot(core.SHUFFLE), "★ Shuffle", core.SHUFFLE)
+        for key in core.pin_categories():
+            if key != core.SHUFFLE:
+                self.show_only.addItem(self._dot(key), core.theme_label(key), key)
+        self.show_only.currentIndexChanged.connect(self.apply_filter)
+        head.addWidget(self.show_only)
 
         self.list = QListWidget()
         self.list.setObjectName("library")
@@ -451,15 +463,28 @@ class LibraryPage(QWidget):
         return item is not None and core.SHUFFLE in (item.data(CATEGORIES_ROLE) or [])
 
     def apply_filter(self):
-        only = self.shuffle_only.isChecked()
+        only = self.show_only.currentData()
         words = self.search.text().strip().lower().split()
         for item in self.items.values():
             name = item.data(Qt.UserRole + 2) or ""
-            hide = ((only and core.SHUFFLE not in (item.data(CATEGORIES_ROLE) or []))
+            hide = ((only and only not in (item.data(CATEGORIES_ROLE) or []))
                     or any(w not in name for w in words))
             item.setHidden(hide)
             if hide:
                 item.setSelected(False)
+        if self.entries:
+            # Nothing left to show is said, not left as a blank grid.
+            shown = any(not item.isHidden() for item in self.items.values())
+            self.list.setVisible(shown)
+            self.empty.setVisible(not shown)
+            if not shown and words:
+                self.empty.setText("Nothing saved matches that name.")
+            elif not shown:
+                self.empty.setText(
+                    "Nothing in the shuffle set yet: pick some under All and "
+                    "press ★ Shuffle." if only == core.SHUFFLE else
+                    f"Nothing pinned to {core.theme_label(only)} yet: pick "
+                    f"some under All, then Pin to… → {core.theme_label(only)}.")
         self.sync()
 
     def sync(self):
@@ -479,8 +504,11 @@ class LibraryPage(QWidget):
             "Take the selected wallpapers out of the shuffle set" if leaving else
             "Add the selected wallpapers to the shuffle set — the rotation "
             "draws from it when set to Shuffle my picks")
-        in_set = sum(core.SHUFFLE in cats for _, cats in self.entries)
-        self.shuffle_only.setText(f"★ {in_set}" if in_set else "★ only")
+        for i in range(1, self.show_only.count()):
+            key = self.show_only.itemData(i)
+            name = "★ Shuffle" if key == core.SHUFFLE else core.theme_label(key)
+            held = sum(key in cats for _, cats in self.entries)
+            self.show_only.setItemText(i, f"{name}   {held}" if held else name)
         total = len(self.entries)
         self.total.setText(str(total) if total else "")
         if chosen:
@@ -502,6 +530,20 @@ class LibraryPage(QWidget):
             item = self.list.currentItem()
             if item is not None:
                 item.setSelected(not item.isSelected())
+            return True
+        if watched is self.list and event.type() == QEvent.KeyPress \
+                and event.key() in (Qt.Key_Return, Qt.Key_Enter) and not self.asking():
+            # Enter sets the tile as the wallpaper — the picked ones, or the
+            # one the keyboard is on; with screens of their own, the menu
+            # asking which one opens.
+            item = self.list.currentItem()
+            if item is not None and not self.list.selectedItems():
+                item.setSelected(True)
+            if self.set_btn.isEnabled():
+                if self.set_btn.menu() is not None:
+                    self.set_btn.showMenu()
+                else:
+                    self.set_as_wallpaper()
             return True
         return super().eventFilter(watched, event)
 

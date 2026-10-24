@@ -109,6 +109,82 @@ def main():
           [a.text() for a in win.library.screen_menu.actions() if a.text()][-1]
           == "Every screen")
 
+    # ── the keyboard ─────────────────────────────────────────────────────
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QColor, QImage
+    from PySide6.QtTest import QTest
+
+    def key(k, mods=Qt.NoModifier):
+        QTest.keyClick(app.focusWidget() or win, k, mods)
+        app.processEvents()
+
+    core.SAVE_DIR.mkdir(parents=True, exist_ok=True)
+    for i in range(3):
+        image = QImage(64, 36, QImage.Format_RGB32)
+        image.fill(QColor(40 * i, 90, 140))
+        image.save(str(core.SAVE_DIR / f"tile-{i}.png"))
+    win.show_tab(1)
+    app.processEvents()
+    tiles = win.library.list
+    tiles.setFocus(Qt.TabFocusReason)
+    tiles.setCurrentRow(0)
+    key(Qt.Key_Right)
+    check("Right moves to the next saved tile", tiles.currentRow() == 1)
+    check("the Random tab's keys are off on another tab",
+          not any(sc.isEnabled() for sc, groups in win._shortcuts if "reel" in groups))
+
+    tiles.clearSelection()
+    tiles.item(2).setSelected(True)
+    win.library.pin("halloween")
+    win.library.reload()
+    show = win.library.show_only
+    show.setCurrentIndex(show.findData("halloween"))
+    app.processEvents()
+    check("the Saved tab can show just what is pinned to one holiday",
+          [tiles.item(i).isHidden() for i in range(tiles.count())] == [True, True, False])
+    show.setCurrentIndex(0)
+
+    win.show_tab(2)
+    app.processEvents()
+    seg = win.settings.appearance
+    before = seg.value()
+    seg.buttons[before].setFocus(Qt.TabFocusReason)
+    key(Qt.Key_Right if before != "light" else Qt.Key_Left)
+    check("an arrow key picks the next option of a segmented control",
+          seg.value() != before and core.load_prefs()["appearance"] == seg.value())
+    seg.set_value(before)
+
+    spin = win.settings.every
+    spin.show()
+    spin.setFocus(Qt.TabFocusReason)
+    spin.selectAll()
+    key(Qt.Key_1)
+    check("a digit typed in the spin box stays there", win.current_tab() == 2)
+
+    radios = win.settings.screens_group.buttons()
+    first = next(r for r in radios if r.isChecked())
+    first.setFocus(Qt.TabFocusReason)
+    key(Qt.Key_Down)
+    check("an arrow key moves between the choice cards", not first.isChecked())
+    first.click()
+
+    hits = []
+    button = win.settings.change_now
+    button.clicked.connect(lambda *_: hits.append(1))
+    button.setFocus(Qt.TabFocusReason)
+    key(Qt.Key_Return)
+    QTest.qWait(300)
+    check("Enter presses the focused button", hits == [1])
+    check("and the focus ring shows where it is", button.property("kbfocus") is True)
+
+    QTest.keyClick(win, Qt.Key_F, Qt.ControlModifier)
+    app.processEvents()
+    check("Ctrl+F goes to the Saved search",
+          win.current_tab() == 1 and app.focusWidget() is win.library.search)
+    key(Qt.Key_Escape)
+    check("Esc leaves the search box, not the app",
+          win.isVisible() and app.focusWidget() is tiles)
+
     win.close()
     check("window closes without raising", True)
 

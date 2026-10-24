@@ -2,7 +2,7 @@
 control and a radio card. Each only sets an objectName or a "class"
 property; what that looks like is in style.py.
 """
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtWidgets import (
     QButtonGroup, QFrame, QHBoxLayout, QLabel, QPushButton, QRadioButton,
     QVBoxLayout, QWidget,
@@ -93,9 +93,33 @@ class Segmented(QFrame):
             self.buttons[key] = button
             layout.addWidget(button, 1 if expand else 0)
             button.clicked.connect(lambda _=False, k=key: self._picked(k))
+            button.installEventFilter(self)
         self.keys = [key for _, key in options]
         if self.keys:
             self.buttons[self.keys[0]].setChecked(True)
+
+    def eventFilter(self, watched, event):
+        # The arrow keys pick the option beside the current one, as they do
+        # in a row of radio buttons; Home and End the first and the last.
+        if event.type() == QEvent.KeyPress and watched in self.buttons.values():
+            step = {Qt.Key_Left: -1, Qt.Key_Up: -1, Qt.Key_Right: 1,
+                    Qt.Key_Down: 1}.get(event.key())
+            at = self.currentIndex()
+            if step is not None:
+                to = max(0, min(len(self.keys) - 1, at + step))
+            elif event.key() == Qt.Key_Home:
+                to = 0
+            elif event.key() == Qt.Key_End:
+                to = len(self.keys) - 1
+            else:
+                return False
+            button = self.buttons[self.keys[to]]
+            button.setFocus(Qt.TabFocusReason)
+            if to != at:
+                button.setChecked(True)
+                self._picked(self.keys[to])
+            return True
+        return super().eventFilter(watched, event)
 
     def _picked(self, key):
         self.changed.emit(key)
@@ -145,6 +169,25 @@ class Choice(QFrame):
         self.extra.setSpacing(6)
         outer.addLayout(self.extra)
         self.radio.toggled.connect(self._toggled)
+        self.radio.installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        # Each card's radio has a parent of its own, so Qt's arrow keys —
+        # which only move between radios sharing one — need doing here:
+        # through the QButtonGroup the cards were put in.
+        group = self.radio.group()
+        if (watched is self.radio and group is not None
+                and event.type() == QEvent.KeyPress):
+            step = {Qt.Key_Left: -1, Qt.Key_Up: -1, Qt.Key_Right: 1,
+                    Qt.Key_Down: 1}.get(event.key())
+            if step is not None:
+                radios = [b for b in group.buttons() if b is self.radio
+                          or (b.isEnabled() and b.isVisibleTo(self.window()))]
+                to = radios[(radios.index(self.radio) + step) % len(radios)]
+                to.setFocus(Qt.TabFocusReason)
+                to.click()
+                return True
+        return super().eventFilter(watched, event)
 
     def _toggled(self, on):
         self.setProperty("checked", on)

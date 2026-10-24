@@ -201,6 +201,20 @@ jobs:
     needs: [version, linux-install, windows, macos, android-x86_64, android-arm64]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      # This version's section of CHANGELOG.md is the release's text, and
+      # what the in-app update offer shows; a release without one is refused.
+      - name: Release notes
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          awk -v want="## ${VERSION}" '
+            $0 == want { on = 1; next }
+            /^## /     { if (on) exit }
+            on' CHANGELOG.md > release-notes.md
+          cat release-notes.md
+          grep -q '[^[:space:]]' release-notes.md \
+            || { echo "::error::CHANGELOG.md has no '## ${VERSION}' section"; exit 1; }
       # The installers only: the Android builds also leave a build log and
       # the emulator's screenshots behind.
       - uses: actions/download-artifact@v4
@@ -218,4 +232,4 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" assets/* \
             --repo "${GITHUB_REPOSITORY}" \
             --title "Random Wallpaper ${{ needs.version.outputs.version }}" \
-            --generate-notes
+            --notes-file release-notes.md
