@@ -530,10 +530,13 @@ mine = pool / "the-one-i-want.jpg"; mine.write_bytes(b"pumpkin")
 (pool / "notes.txt").write_bytes(b"not an image")
 check("only images count as chosen", rw.pool_images("halloween") == [mine])
 
+# Compared with what was there before: in late October the ticks above have
+# already downloaded a real halloween-2026.
+before = set(rw.AUTO_DIR.glob("halloween-2026.*"))
 chosen = rw.fetch_for_period(dict(rw.DEFAULTS), "halloween", "halloween-2026")
 check("a category's turn uses what was chosen, not a download", chosen == mine)
 check("and downloads nothing into the rotation's own directory",
-      not list(rw.AUTO_DIR.glob("halloween-2026.*")))
+      set(rw.AUTO_DIR.glob("halloween-2026.*")) == before)
 
 second = pool / "and-this-one-too.png"; second.write_bytes(b"bats")
 picks = {rw.fetch_for_period(dict(rw.DEFAULTS), "halloween", "halloween-2026")
