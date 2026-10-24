@@ -577,14 +577,23 @@ class SettingsPage(QWidget):
         self.wallhaven_card.setVisible(source == "wallhaven")
 
         if source == "konachan":
-            hint = ("Anime art, safe posts only. No server-side size filter, so "
-                    "40 candidates are fetched and one that fits is picked.")
+            hint = ("Anime wallpapers, safe posts only. No server-side size "
+                    "filter, so 40 candidates are fetched and one that fits is "
+                    "picked.")
+        elif source == "danbooru":
+            hint = ("Anime art, millions of pictures, general rating only. "
+                    "Size, shape and the season or holiday are filtered on "
+                    "the server; comics are skipped.")
+        elif source == "safebooru":
+            hint = ("Anime art, millions of pictures, safe posts only. Size "
+                    "is filtered on the server, shape here; comics are "
+                    "skipped.")
         else:
             hint = ("Mixed; untick Anime below for photographs only. Filters "
                     "apply server-side.")
         if source == "konachan" and self.prefs.get("orientation") == "portrait":
             hint += ("  Konachan has no portrait pictures, so with Portrait "
-                     "the frames come from Wallhaven.")
+                     "the frames come from Danbooru.")
         elif not core.source_serves(source, theme):
             other = next(label for label, key, _ in core.SOURCES
                          if core.source_serves(key, theme))

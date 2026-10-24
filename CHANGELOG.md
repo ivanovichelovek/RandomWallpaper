@@ -3,6 +3,22 @@
 Each release's section is published as its GitHub release text, and is what
 the app shows when it offers that update.
 
+## 1.5.0
+
+- Two new sources, both of anime art with millions of pictures:
+  - **Danbooru**, general (safe) rating only. Season or holiday,
+    orientation and size are all filtered on its server.
+  - **Safebooru**, a board of safe posts only.
+
+  Comics and pages of text are skipped on both, as are very long or very
+  wide images. For a Halloween portrait at 1080×1920 or more, Danbooru has
+  thousands of pictures where Wallhaven has five.
+- Konachan with Portrait now takes its pictures from Danbooru.
+- No more repeats while there is something new: the app remembers the last
+  300 pictures it showed, on every source. A small pool goes round all of
+  them before one comes back.
+- Random sources are no longer answered from the day-long cache.
+
 ## 1.4.2
 
 - Portrait works. The minimum resolution now turns upright with it, so

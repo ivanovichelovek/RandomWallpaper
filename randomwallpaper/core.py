@@ -53,6 +53,21 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
 )
 
+# Danbooru sits behind Cloudflare, which turns away a browser's User-Agent
+# coming from something that is plainly not a browser (403, the API and the
+# image CDN alike) and lets an honest one through, as its API terms ask.
+HONEST_HOSTS = ("donmai.us", "safebooru.org")
+
+
+def _agent(url):
+    host = urllib.parse.urlparse(url).hostname or ""
+    if any(host == h or host.endswith("." + h) for h in HONEST_HOSTS):
+        from . import __version__
+        return (f"RandomWallpaper/{__version__} "
+                f"(+https://github.com/ivanovichelovek/RandomWallpaper)")
+    return USER_AGENT
+
+
 TIMEOUT = 30
 REEL_AHEAD = 6          # frames kept downloaded ahead of the current one
 # A themed pool can be small — wallhaven has under a hundred Easter wallpapers
@@ -173,6 +188,21 @@ THEMES = [
     ("valentine",  "Valentine's Day",       "valentine",  ["valentine"]),
     ("easter",     "Easter",                None,         ["easter", "easter eggs"]),
 ]
+
+# The two boorus (Danbooru, Safebooru) file the same occasions under the same
+# tag names, counted against both on 24 Oct 2026: thousands of safe posts
+# each, Easter the smallest at ~800. Christmas / New Year asks either tag.
+BOORU_TAGS = {
+    "spring": ["spring_(season)"],
+    "summer": ["summer"],
+    "autumn": ["autumn"],
+    "winter": ["winter"],
+    "halloween": ["halloween"],
+    "christmas": ["christmas", "new_year"],
+    "valentine": ["valentine"],
+    "easter": ["easter"],
+}
+BOORUS = ("danbooru", "safebooru")
 
 # ── the calendar ────────────────────────────────────────────────────────────
 # Meteorological seasons — whole months, northern hemisphere — because that is
@@ -298,6 +328,8 @@ def source_serves(source, theme):
     key, _, konachan_tag, wallhaven_queries = theme_entry(theme)
     if key == "all":
         return True
+    if source in BOORUS:
+        return bool(BOORU_TAGS.get(key))
     return bool(konachan_tag) if source == "konachan" else bool(wallhaven_queries)
 
 
@@ -422,7 +454,7 @@ def _get(url, attempts=3):
     often enough that a single try is not good enough — IncompleteRead on the
     last few hundred KB. Retry before surfacing it."""
     last = None
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    req = urllib.request.Request(url, headers={"User-Agent": _agent(url)})
     for _ in range(attempts):
         try:
             with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
@@ -575,7 +607,7 @@ def pick_konachan(prefs):
             "orientation filters"
         )
 
-    post = random.choice(usable)
+    post = random.choice(_unseen(usable, lambda p: f"konachan-{p.get('id', 'x')}"))
     file_url = post["file_url"]
     if file_url.startswith("//"):
         file_url = "https:" + file_url
@@ -636,7 +668,7 @@ def pick_wallhaven(prefs):
             )
         raise FetchError("wallhaven returned nothing for these filters")
 
-    post = random.choice(posts)
+    post = random.choice(_unseen(posts, lambda p: f"wallhaven-{p.get('id', 'x')}"))
     return {
         "url": post["path"],
         "name": f"wallhaven-{post.get('id', 'x')}",
@@ -647,6 +679,187 @@ def pick_wallhaven(prefs):
     }
 
 
+# ── not the same picture twice ──────────────────────────────────────────────
+# Every frame's name (konachan-123, danbooru-456 …) once it is downloaded, the
+# newest last. A source's candidates that are in here are passed over while
+# there are others, so a small pool — five portrait Halloween pictures on
+# wallhaven — goes round all five before it repeats one, instead of drawing
+# at random each time. The GUI, the rotation and Android's background job all
+# write it, so it is replaced whole, never edited in place.
+SEEN_FILE = STATE_DIR / "seen.json"
+SEEN_KEEP = 300
+
+
+def seen_names():
+    try:
+        names = json.loads(SEEN_FILE.read_text())
+        return names if isinstance(names, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def remember_seen(name):
+    names = [n for n in seen_names() if n != name] + [name]
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=STATE_DIR, suffix=".part")
+        with os.fdopen(fd, "w") as fh:
+            json.dump(names[-SEEN_KEEP:], fh)
+        os.replace(tmp, SEEN_FILE)
+    except OSError:
+        pass          # a repeat now and then is not worth failing a frame over
+
+
+def _unseen(candidates, name_of):
+    """The candidates not shown yet — or, when every one has been, all of
+    them: a repeat beats an empty reel."""
+    seen = set(seen_names())
+    fresh = [c for c in candidates if name_of(c) not in seen]
+    return fresh or candidates
+
+
+# ── the boorus: Danbooru and Safebooru ──────────────────────────────────────
+# Image boards of anime art, millions of posts, far deeper than the two
+# wallpaper sites — 5732 portrait Halloween pictures on Danbooru at 1080×1920
+# and up, where wallhaven has five. They are illustrations, not wallpapers
+# picked for a screen, so comics and pages of text are passed over by tag.
+BOORU_EXTS = {"jpg", "jpeg", "png", "webp"}       # no gif, video or ugoira zip
+BOORU_MAX_BYTES = 25_000_000      # a 5400×9600 original is no phone's wallpaper
+BOORU_SKIP_TAGS = {"comic", "4koma", "text_focus", "character_sheet",
+                   "multiple_views", "reference_sheet"}
+
+DANBOORU_HOST = "danbooru.donmai.us"
+SAFEBOORU_HOST = "safebooru.org"
+
+
+def _booru_theme_tag(prefs):
+    theme = theme_key(prefs)
+    if theme == "all":
+        return None
+    return random.choice(BOORU_TAGS[theme])
+
+
+def _booru_wordy(tags):
+    return bool(BOORU_SKIP_TAGS & set(tags.split()))
+
+
+def _screen_shaped(width, height):
+    """Not a long scroll or a banner: a board has both, and a 4227×12096
+    page cropped to a screen is a sliver of it."""
+    if not (width and height):
+        return True
+    return 0.4 <= width / height <= 2.6
+
+
+DANBOORU_PAGES = 200     # deeper than this an untagged search times out
+
+
+def pick_danbooru(prefs):
+    """Danbooru's safe-for-work rating (general) and its filters by ratio,
+    size and random order all run on the server, and no key is needed.
+
+    Without an account a search may hold only two ordinary tags, and
+    order:random is one, so a theme leaves no room for -comic: comics are
+    filtered here, by the post's tags. The rating, ratio and size metatags
+    do not count. Random order over the whole catalogue times out on the
+    server, so with no theme a random page of the newest is asked instead —
+    200 pages of 40 is a pool of 8000.
+    """
+    theme_tag = _booru_theme_tag(prefs)
+    tags = [theme_tag, "order:random"] if theme_tag else ["-comic"]
+    tags.append("rating:g")
+    if prefs["orientation"] == "landscape":
+        tags.append("ratio:>1")
+    elif prefs["orientation"] == "portrait":
+        tags.append("ratio:<1")
+    min_w, min_h = _min_size(prefs)
+    if min_w:
+        tags += [f"width:>={min_w}", f"height:>={min_h}"]
+    base = (f"https://{DANBOORU_HOST}/posts.json?limit=40&tags="
+            + urllib.parse.quote(" ".join(tags)))
+    # A random page, then a shallower one should the database time out.
+    attempts = ([base] if theme_tag else
+                [f"{base}&page={random.randint(1, DANBOORU_PAGES)}",
+                 f"{base}&page={random.randint(1, 20)}"])
+    posts, problem = None, None
+    for url in attempts:
+        try:
+            # ttl=0: order:random is the same URL every time, only the
+            # answer is random — a cached one would be the same 40 all day.
+            posts = _get_json(url, ttl=0)
+            break
+        except urllib.error.HTTPError as exc:
+            problem = FetchError(f"danbooru answered {exc.code}")
+        except (OSError, ValueError) as exc:
+            problem = FetchError(f"could not reach danbooru: {exc}")
+    if posts is None:
+        raise problem
+    if not isinstance(posts, list):
+        raise FetchError(f"danbooru: {posts.get('message') if isinstance(posts, dict) else posts}")
+
+    usable = [p for p in posts
+              if p.get("file_url") and p.get("file_ext") in BOORU_EXTS
+              and (p.get("file_size") or 0) <= BOORU_MAX_BYTES
+              and p.get("rating") == "g"
+              and not _booru_wordy(p.get("tag_string", ""))
+              and _fits(prefs, p.get("image_width"), p.get("image_height"))
+              and _screen_shaped(p.get("image_width"), p.get("image_height"))]
+    if not usable:
+        raise FetchError("danbooru had nothing that fits these filters this time — try again")
+    post = random.choice(_unseen(usable, lambda p: f"danbooru-{p.get('id')}"))
+    artist = (post.get("tag_string_artist") or "").split()
+    return {
+        "url": post["file_url"],
+        "name": f"danbooru-{post.get('id', 'x')}",
+        "width": post.get("image_width"),
+        "height": post.get("image_height"),
+        "credit": artist[0].replace("_", " ") if artist else DANBOORU_HOST,
+        "source": "Danbooru",
+    }
+
+
+def pick_safebooru(prefs):
+    """Safebooru is Gelbooru's safe-only board. Size and random order are
+    filtered on the server; orientation is not, so that is checked here.
+    An empty search answers with an empty body, not with []."""
+    tags = [t for t in (_booru_theme_tag(prefs), "-comic", "sort:random") if t]
+    min_w, min_h = _min_size(prefs)
+    if min_w:
+        tags += [f"width:>={min_w}", f"height:>={min_h}"]
+    url = (f"https://{SAFEBOORU_HOST}/index.php?page=dapi&s=post&q=index&json=1"
+           f"&limit=100&tags=" + urllib.parse.quote(" ".join(tags)))
+    try:
+        raw = _get(url)      # not _get_json: random order, nothing to cache
+        posts = json.loads(raw) if raw.strip() else []
+    except urllib.error.HTTPError as exc:
+        raise FetchError(f"safebooru answered {exc.code}") from exc
+    except (OSError, ValueError) as exc:
+        raise FetchError(f"could not reach safebooru: {exc}") from exc
+    if isinstance(posts, dict):
+        posts = posts.get("post") or []
+
+    def ext(p):
+        return Path(p.get("image") or p.get("file_url") or "").suffix.lower().lstrip(".")
+
+    usable = [p for p in posts
+              if p.get("file_url") and ext(p) in BOORU_EXTS
+              and p.get("rating") in ("general", "safe")
+              and not _booru_wordy(p.get("tags", ""))
+              and _fits(prefs, p.get("width"), p.get("height"))
+              and _screen_shaped(p.get("width"), p.get("height"))]
+    if not usable:
+        raise FetchError("safebooru had nothing that fits these filters this time — try again")
+    post = random.choice(_unseen(usable, lambda p: f"safebooru-{p.get('id')}"))
+    return {
+        "url": post["file_url"],
+        "name": f"safebooru-{post.get('id', 'x')}",
+        "width": post.get("width"),
+        "height": post.get("height"),
+        "credit": SAFEBOORU_HOST,
+        "source": "Safebooru",
+    }
+
+
 # The osu! seasonal-backgrounds endpoint the old shell script used now answers
 # 403 — it went behind OAuth — so wallhaven takes its place as second source.
 # Pixabay was the third and is gone: two catalogues that both answer a themed
@@ -654,6 +867,8 @@ def pick_wallhaven(prefs):
 SOURCES = [
     ("Konachan", "konachan", pick_konachan),
     ("Wallhaven", "wallhaven", pick_wallhaven),
+    ("Danbooru", "danbooru", pick_danbooru),
+    ("Safebooru", "safebooru", pick_safebooru),
 ]
 
 
@@ -685,8 +900,8 @@ def effective_source(prefs):
     if chosen == "konachan" and prefs.get("orientation") == "portrait":
         # konachan is a desktop-wallpaper board: in samples of hundreds of
         # its posts not one stood upright, so a portrait reel from it is an
-        # empty reel.
-        return "wallhaven"
+        # empty reel. Danbooru has thousands even under a holiday's tag.
+        return "danbooru"
     if source_serves(chosen, theme):
         return chosen
     return next((key for _, key, _ in SOURCES if source_serves(key, theme)),
@@ -713,6 +928,7 @@ def download(prefs):
     meta["path"] = Path(tmp)
     meta["ext"] = ext
     meta["bytes"] = meta["path"].stat().st_size
+    remember_seen(meta["name"])
     return meta
 
 

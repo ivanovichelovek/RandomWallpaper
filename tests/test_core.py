@@ -134,13 +134,14 @@ except rw.FetchError:
 
 
 # ── pixabay is gone, and an old config naming it must not resurrect it ──────
-check("two sources only", [k for _, k, _ in rw.SOURCES] == ["konachan", "wallhaven"])
+check("four sources, pixabay not among them",
+      [k for _, k, _ in rw.SOURCES] == ["konachan", "wallhaven", "danbooru", "safebooru"])
 check("no pixabay key in defaults", "pixabay_apikey" not in rw.DEFAULTS)
 rw.CONFIG_FILE.write_text(json.dumps({"source": "pixabay", "pixabay_apikey": "k"}))
 revived = rw.load_prefs()
 check("old pixabay key dropped on load", "pixabay_apikey" not in revived)
 check("a config naming pixabay still resolves to a real source",
-      rw.effective_source(revived) in ("konachan", "wallhaven"))
+      rw.effective_source(revived) in [k for _, k, _ in rw.SOURCES])
 rw.CONFIG_FILE.unlink()
 
 # ── themes ──────────────────────────────────────────────────────────────────
@@ -165,9 +166,9 @@ check("a theme konachan does serve stays on konachan",
       == "konachan")
 
 # Portrait: konachan has none, and the minimum stands upright.
-check("portrait borrows wallhaven: konachan has no upright pictures",
+check("portrait borrows danbooru: konachan has no upright pictures",
       rw.effective_source(dict(rw.DEFAULTS, source="konachan", orientation="portrait"))
-      == "wallhaven")
+      == "danbooru")
 upright = dict(rw.DEFAULTS, orientation="portrait", minimum="1920x1080")
 check("a portrait minimum of 1920x1080 means 1080 wide, 1920 tall",
       rw._min_size(upright) == (1080, 1920))
@@ -181,6 +182,95 @@ try:
     check("konachan says why it cannot serve easter", False)
 except rw.FetchError as exc:
     check("konachan says why it cannot serve easter", "wallhaven" in str(exc))
+
+# ── the boorus, offline: what is asked, and what is passed over ────────────
+real_get_json, real_get = rw._get_json, rw._get
+asked = []
+
+
+def booru_post(i, w=1080, h=1920, ext="jpg", rating="g", tags="1girl", size=1000):
+    return {"id": i, "file_url": f"https://cdn.donmai.us/original/{i}.{ext}",
+            "file_ext": ext, "image_width": w, "image_height": h,
+            "rating": rating, "tag_string": tags, "file_size": size,
+            "tag_string_artist": "some_artist"}
+
+
+def fake_danbooru(posts):
+    def get_json(url, ttl=None):
+        asked.append((url, ttl))
+        return posts
+    rw._get_json = get_json
+
+
+rw.SEEN_FILE.unlink(missing_ok=True)
+portrait = dict(rw.DEFAULTS, source="danbooru", orientation="portrait",
+                minimum="1920x1080", theme="halloween")
+fake_danbooru([booru_post(1, ext="mp4"), booru_post(2, tags="1girl comic"),
+               booru_post(3, rating="s"), booru_post(4, w=1920, h=1080),
+               booru_post(5, size=40_000_000), booru_post(6, w=1000, h=3000),
+               booru_post(7)])
+got = rw.pick_danbooru(portrait)
+url, ttl = asked[-1]
+query = rw.urllib.parse.unquote(url)
+check("danbooru: theme, random order, general rating, upright, upright minimum",
+      all(t in query for t in ("halloween", "order:random", "rating:g", "ratio:<1",
+                               "width:>=1080", "height:>=1920")))
+check("danbooru: two ordinary tags at most, the anonymous limit",
+      len([t for t in query.split("tags=")[1].split()
+           if ":" not in t or t.startswith("order:")]) <= 2)
+check("danbooru: a random answer is never served from the day cache", ttl == 0)
+check("danbooru: video, comics, other ratings, wrong shape, huge files and "
+      "long scrolls are all passed over", got["name"] == "danbooru-7")
+check("danbooru: the artist is credited", got["credit"] == "some artist")
+fake_danbooru([booru_post(1, ext="gif")])
+try:
+    rw.pick_danbooru(portrait)
+    check("danbooru: nothing usable is a FetchError, not a crash", False)
+except rw.FetchError:
+    check("danbooru: nothing usable is a FetchError, not a crash", True)
+fake_danbooru([booru_post(9, w=1920, h=1080)])
+rw.pick_danbooru(dict(rw.DEFAULTS, source="danbooru", theme="all"))
+check("danbooru: no theme asks a random page, not random order (it times out)",
+      "page=" in asked[-1][0] and "order%3Arandom" not in asked[-1][0])
+
+# Not the same picture twice while there are others.
+fake_danbooru([booru_post(i) for i in (21, 22, 23)])
+shown = set()
+for _ in range(3):
+    pick = rw.pick_danbooru(portrait)
+    shown.add(pick["name"])
+    rw.remember_seen(pick["name"])
+check("three picks from a pool of three are the three different ones",
+      shown == {"danbooru-21", "danbooru-22", "danbooru-23"})
+check("a fourth, with every one seen, repeats rather than failing",
+      rw.pick_danbooru(portrait)["name"] in shown)
+for i in range(rw.SEEN_KEEP + 10):
+    rw.remember_seen(f"x-{i}")
+check("the list of seen pictures stays bounded", len(rw.seen_names()) == rw.SEEN_KEEP)
+rw.SEEN_FILE.unlink(missing_ok=True)
+
+# Safebooru answers an empty search with an empty body.
+rw._get = lambda url, attempts=3: b""
+try:
+    rw.pick_safebooru(dict(rw.DEFAULTS, source="safebooru", theme="easter"))
+    check("safebooru: an empty answer is a FetchError", False)
+except rw.FetchError:
+    check("safebooru: an empty answer is a FetchError", True)
+rw._get = lambda url, attempts=3: json.dumps([
+    {"id": 1, "file_url": "https://safebooru.org/images/1/a.png", "image": "a.png",
+     "width": 1920, "height": 1080, "rating": "general", "tags": "1girl"},
+    {"id": 2, "file_url": "https://safebooru.org/images/1/b.jpg", "image": "b.jpg",
+     "width": 1080, "height": 1920, "rating": "general", "tags": "1girl"},
+]).encode()
+check("safebooru: orientation is checked here, since it cannot be asked",
+      rw.pick_safebooru(dict(rw.DEFAULTS, source="safebooru", orientation="portrait",
+                             minimum=""))["name"] == "safebooru-2")
+rw._get_json, rw._get = real_get_json, real_get
+
+check("the boorus are honest about who is asking — Cloudflare turns a "
+      "browser's User-Agent away from a script",
+      rw._agent("https://cdn.donmai.us/x.jpg").startswith("RandomWallpaper/")
+      and rw._agent("https://konachan.net/post.json") == rw.USER_AGENT)
 
 # An unknown theme must degrade to "all" everywhere at once, or the source
 # that serves "no theme" and the fetch that demands a tag disagree forever.
@@ -650,7 +740,15 @@ check("the URL is never written to disk — it carries the key",
 # ── a real download per source, then the save path ──────────────────────────
 saved = []
 for label, key, _ in rw.SOURCES:
-    frame = rw.download(dict(rw.DEFAULTS, source=key))
+    try:
+        frame = rw.download(dict(rw.DEFAULTS, source=key))
+    except rw.FetchError as exc:
+        if key not in rw.BOORUS:
+            raise
+        # The boorus sit behind Cloudflare, which may turn a CI runner's
+        # datacenter address away; their logic is covered offline below.
+        print(f"SKIP  {label}: {exc}")
+        continue
     cached = frame["path"]
     check(f"{label}: download landed in cache",
           cached.exists() and cached.parent == rw.CACHE_DIR)
