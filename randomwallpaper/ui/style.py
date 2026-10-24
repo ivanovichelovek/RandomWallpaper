@@ -488,6 +488,10 @@ class FocusRing(QObject):
 
     def eventFilter(self, watched, event):
         kind = event.type()
+        if IS_ANDROID and kind == QEvent.ToolTip:
+            # A tooltip is a popup window, which aborts the app on a phone
+            # (see widgets.Sheet) — and a long press is not a hover anyway.
+            return True
         if kind == QEvent.KeyPress:
             if event.key() in self.KEYS and not self.keyboard:
                 self.keyboard = True

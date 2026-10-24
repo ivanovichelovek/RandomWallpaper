@@ -267,9 +267,8 @@ class Choice(QFrame):
 
 
 class Picker(QComboBox):
-    """A combo box. On a phone its list opens as a sheet inside the window
-    rather than as Qt's popup: the popup is a window of its own, which on
-    Android crashed the app the moment it was tapped."""
+    """A combo box. On a phone its list opens as a Sheet inside the window
+    rather than as Qt's popup — see Sheet for why."""
 
     def __init__(self):
         super().__init__()
@@ -285,68 +284,97 @@ class Picker(QComboBox):
         if not IS_ANDROID:
             super().showPopup()
             return
-        if self.sheet is None:
-            self.sheet = _Sheet(self)
-            self.sheet.destroyed.connect(lambda *_: setattr(self, "sheet", None))
+        if self.sheet is not None:
+            return
+        self.sheet = Sheet.choose(
+            self.window(),
+            [(self.itemIcon(i), self.itemText(i)) for i in range(self.count())],
+            self.currentIndex(), self._picked)
+        self.sheet.destroyed.connect(lambda *_: setattr(self, "sheet", None))
+
+    def _picked(self, index):
+        if index != self.currentIndex():
+            self.setCurrentIndex(index)
+            self.activated.emit(index)
 
 
-class _Sheet(QFrame):
-    """A Picker's list: the window dimmed, the choices on a card at the
-    bottom, the current one marked. A choice picks and closes; a tap on the
-    dimmed part, Back or Esc closes."""
+class Sheet(QFrame):
+    """A card at the bottom of the window over a dimmed rest of it — what a
+    phone uses for menus, pickers and questions.
 
-    def __init__(self, picker):
-        host = picker.window()
+    On Android every Qt popup (a combo box's list, a QMenu, a QDialog, a
+    tooltip) is a window of its own with its own GL surface, and creating
+    one aborts the app on real phones ("Failed to acquire deadlock protector
+    for QAndroidPlatformOpenGLWindow::eglSurface()"). A Sheet is a child of
+    the window it covers, so nothing new is created. A tap on the dimmed
+    part, Back or Esc closes it.
+    """
+
+    def __init__(self, host):
         super().__init__(host)
-        self.picker = picker
+        self.on_close = None
         self.setObjectName("sheetShade")
         self.setGeometry(host.rect())
         outer = QVBoxLayout(self)
         outer.setContentsMargins(12, 12, 12, 12)
         outer.addStretch(1)
-        panel = QFrame()
-        panel.setObjectName("sheet")
-        outer.addWidget(panel)
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(8, 10, 8, 10)
-        layout.setSpacing(2)
+        self.panel = QFrame()
+        self.panel.setObjectName("sheet")
+        outer.addWidget(self.panel)
+        self.body = QVBoxLayout(self.panel)
+        self.body.setContentsMargins(8, 10, 8, 10)
+        self.body.setSpacing(6)
+        host.installEventFilter(self)
+
+    def present(self):
+        self.show()
+        self.raise_()
+        self.setFocus()
+        return self
+
+    def scrolling(self, content, most=0.7):
+        """`content` in a scroll area as tall as it needs, up to `most` of
+        the window."""
         scroller = QScrollArea()
         scroller.setWidgetResizable(True)
         scroller.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroller.setFrameShape(QFrame.NoFrame)
+        scroller.setWidget(content)
+        from .style import touch_scroll
+        touch_scroll(scroller)
+        want = content.sizeHint().height() + 4
+        scroller.setFixedHeight(min(want, int(self.parentWidget().height() * most)))
+        self.body.addWidget(scroller)
+        return scroller
+
+    @classmethod
+    def choose(cls, host, entries, current, picked, title=None):
+        """A list of (icon, text) to pick one of; picked(index) after."""
+        sheet = cls(host)
+        if title:
+            sheet.body.addWidget(label(title, "strong"))
         listing = QWidget()
         items = QVBoxLayout(listing)
         items.setContentsMargins(0, 0, 0, 0)
         items.setSpacing(2)
-        for i in range(picker.count()):
-            button = QPushButton(picker.itemIcon(i), picker.itemText(i))
+        for i, (icon, text) in enumerate(entries):
+            button = QPushButton(icon, text) if icon is not None else QPushButton(text)
             button.setProperty("class", "sheetItem")
             button.setCheckable(True)
-            button.setChecked(i == picker.currentIndex())
-            button.clicked.connect(lambda _=False, i=i: self.pick(i))
+            button.setChecked(i == current)
+            button.clicked.connect(lambda _=False, i=i: sheet.close_sheet(lambda: picked(i)))
             items.addWidget(button)
-        scroller.setWidget(listing)
-        from .style import touch_scroll
-        touch_scroll(scroller)
-        # Tall enough for every entry, up to most of the window.
-        want = listing.sizeHint().height() + 4
-        scroller.setFixedHeight(min(want, int(host.height() * 0.7)))
-        layout.addWidget(scroller)
-        host.installEventFilter(self)
-        self.show()
-        self.raise_()
-        self.setFocus()
+        sheet.scrolling(listing)
+        return sheet.present()
 
-    def pick(self, index):
-        self.close_sheet()
-        if index != self.picker.currentIndex():
-            self.picker.setCurrentIndex(index)
-            self.picker.activated.emit(index)
-
-    def close_sheet(self):
+    def close_sheet(self, then=None):
         self.hide()
-        self.picker.window().removeEventFilter(self)
+        self.parentWidget().removeEventFilter(self)
+        if self.on_close is not None:
+            self.on_close()
         QTimer.singleShot(0, self.deleteLater)
+        if then is not None:
+            QTimer.singleShot(0, then)
 
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Resize:
@@ -354,7 +382,8 @@ class _Sheet(QFrame):
         return False
 
     def mousePressEvent(self, event):
-        self.close_sheet()          # a tap outside the card
+        if not self.panel.geometry().contains(event.position().toPoint()):
+            self.close_sheet()          # a tap outside the card
 
     def keyPressEvent(self, event):
         if event.key() in (Qt.Key_Escape, Qt.Key_Back):

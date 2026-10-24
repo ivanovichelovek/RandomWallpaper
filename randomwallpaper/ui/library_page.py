@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from .. import core
 from . import style
 from .style import CATEGORY_COLORS, touch_scroll
-from .widgets import Picker, label
+from .widgets import Picker, Sheet, label
 from ..paths import CACHE_DIR, IS_ANDROID
 
 # Smaller on a phone, so two tiles share its width rather than one sitting
@@ -305,7 +305,12 @@ class LibraryPage(QWidget):
         self.pin_btn.setToolTip("Use the selected wallpapers for a season or holiday")
         self.pin_menu = QMenu(self.pin_btn)
         self.pin_menu.aboutToShow.connect(self.refresh_pin_menu)
-        self.pin_btn.setMenu(self.pin_menu)
+        if IS_ANDROID:
+            # A QMenu is a popup window, which aborts the app on a phone:
+            # the same choice as a Sheet in the window.
+            self.pin_btn.clicked.connect(self.pin_sheet)
+        else:
+            self.pin_btn.setMenu(self.pin_menu)
         add_action(self.pin_btn, 0, 1)
 
         self.shuffle_btn = QPushButton("★ Shuffle")
@@ -490,7 +495,7 @@ class LibraryPage(QWidget):
     def sync(self):
         chosen = self.selected()
         self.set_btn.setEnabled(len(chosen) == 1)
-        separate = core.screens_mode(self.win.prefs) == "separate"
+        separate = not IS_ANDROID and core.screens_mode(self.win.prefs) == "separate"
         if separate != (self.set_btn.menu() is not None):
             self.set_btn.setMenu(self.screen_menu if separate else None)
         self.pin_btn.setEnabled(bool(chosen))
@@ -679,6 +684,16 @@ class LibraryPage(QWidget):
             text = f"{label}   {count}" if count else label
             action = self.pin_menu.addAction(self._dot(key), text)
             action.triggered.connect(lambda _checked=False, k=key: self.pin(k))
+
+    def pin_sheet(self):
+        keys = [k for k in core.pin_categories() if k != core.SHUFFLE]
+        entries = []
+        for key in keys:
+            count = len(core.pool_images(key))
+            name = core.theme_label(key)
+            entries.append((self._dot(key), f"{name}   {count}" if count else name))
+        Sheet.choose(self.win, entries, -1, lambda i: self.pin(keys[i]),
+                     title="Pin to")
 
     def pin(self, theme):
         chosen = self.selected()

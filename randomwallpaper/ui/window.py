@@ -441,6 +441,8 @@ class Reel(QMainWindow):
 
     def show_keys(self):
         """F1 or ?: every shortcut, in one place."""
+        if IS_ANDROID:
+            return      # no keyboard to speak of, and a QDialog aborts there
         dialog = QDialog(self)
         dialog.setWindowTitle("Keyboard shortcuts")
         layout = QVBoxLayout(dialog)

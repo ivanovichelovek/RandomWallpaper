@@ -18,7 +18,41 @@ from PySide6.QtWidgets import (
 from .. import __version__, core, schedule, update
 from ..paths import IS_ANDROID
 from .style import Switch, theme as look, touch_scroll
-from .widgets import Choice, Picker, Segmented, card, label, repolish, row, rule, titled
+from .widgets import (
+    Choice, Picker, Segmented, Sheet, card, label, repolish, row, rule, titled,
+)
+
+
+def _notes_view(release):
+    notes = QTextBrowser()
+    notes.setOpenExternalLinks(True)
+    notes.setMarkdown(release.get("changes") or release.get("notes")
+                      or f"No notes came with this release — see "
+                         f"[the release page]({release['url']}).")
+    return notes
+
+
+def _update_sheet(host, release, accepted):
+    sheet = Sheet(host)
+    sheet.body.addWidget(label(
+        f"Random Wallpaper {release['version']} is available — this is "
+        f"{__version__}.", "strong", wrap=True))
+    notes = _notes_view(release)
+    touch_scroll(notes)
+    notes.setFixedHeight(int(host.height() * 0.45))
+    sheet.body.addWidget(notes)
+    sheet.body.addWidget(label("Install it now? Android asks to confirm.",
+                               "help", wrap=True))
+    buttons = QHBoxLayout()
+    later = QPushButton("Later")
+    install = QPushButton("Update")
+    install.setProperty("class", "accent")
+    later.clicked.connect(lambda: sheet.close_sheet())
+    install.clicked.connect(lambda: sheet.close_sheet(accepted))
+    buttons.addWidget(later)
+    buttons.addWidget(install, 1)
+    sheet.body.addLayout(buttons)
+    return sheet.present()
 
 
 class _UpdateDialog(QDialog):
@@ -33,12 +67,7 @@ class _UpdateDialog(QDialog):
         layout.addWidget(label(
             f"Random Wallpaper {release['version']} is available — "
             f"this is {__version__}.", "title", wrap=True))
-        notes = QTextBrowser()
-        notes.setOpenExternalLinks(True)
-        notes.setMarkdown(release.get("changes") or release.get("notes")
-                          or f"No notes came with this release — see "
-                             f"[the release page]({release['url']}).")
-        touch_scroll(notes)
+        notes = _notes_view(release)
         layout.addWidget(notes, 1)
         layout.addWidget(label(
             "Install it now? The app restarts when it is done. Checking at "
@@ -891,9 +920,16 @@ class SettingsPage(QWidget):
         self._release = release
         self.update_button.setText(f"Update to {release['version']}")
         self._say_update(f"{release['version']} is available — {release['url']}")
-        if _UpdateDialog(self.win, release).exec() == QDialog.Accepted:
-            self.win.show_tab(2)
-            self.install_update()
+        if IS_ANDROID:
+            # A QDialog is a window of its own, which aborts the app on a
+            # phone (see widgets.Sheet): the same offer as a Sheet.
+            _update_sheet(self.win, release, self._accept_update)
+        elif _UpdateDialog(self.win, release).exec() == QDialog.Accepted:
+            self._accept_update()
+
+    def _accept_update(self):
+        self.win.show_tab(2)
+        self.install_update()
 
     def install_update(self):
         win = self.win
