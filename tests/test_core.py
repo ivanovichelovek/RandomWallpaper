@@ -337,7 +337,9 @@ rw.set_wallpaper_on = fake_set_on
 rw.can_set_per_output = lambda: True
 rw.desktop.set_wallpaper_on = refuse_per_output
 
-auto_prefs = dict(rw.DEFAULTS, theme="all")
+check("a fresh install never changes the wallpaper by itself unasked",
+      rw.DEFAULTS["auto_enabled"] is False)
+auto_prefs = dict(rw.DEFAULTS, theme="all", auto_enabled=True)
 theme_now, period_now = rw.current_period(date.today(), auto_prefs["easter"])
 
 # A wallpaper already in place for today's period: no download, no network.

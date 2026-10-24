@@ -246,6 +246,16 @@ QPushButton.seg:hover {{ color: {t['fg']}; }}
 QPushButton.seg:checked {{ background: {t['surface']}; color: {t['fg']}; font-weight: 700; }}
 QFrame.segmented[strong="true"] QPushButton.seg:checked {{ background: {t['accent']}; color: {t['onAccent']}; }}
 
+/* a Picker's list on a phone: see widgets._Sheet */
+#sheetShade {{ background: rgba(0, 0, 0, 120); }}
+#sheet {{ background: {t['surface']}; border-radius: 20px; }}
+#sheet QScrollArea, #sheet QScrollArea > QWidget > QWidget {{ background: transparent; }}
+QPushButton.sheetItem {{
+    background: transparent; text-align: left;
+    padding: 10px 14px; border-radius: 12px; font-weight: 500;
+}}
+QPushButton.sheetItem:checked {{ background: {t['accentSoft']}; color: {t['accentText']}; font-weight: 700; }}
+
 /* where the keyboard is: see FocusRing */
 QPushButton[kbfocus="true"], QToolButton[kbfocus="true"] {{ border-color: {t['fg']}; }}
 QRadioButton[kbfocus="true"]::indicator, QCheckBox[kbfocus="true"]::indicator {{ border-color: {t['fg']}; }}

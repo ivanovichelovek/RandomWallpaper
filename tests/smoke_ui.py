@@ -169,7 +169,7 @@ def main():
     first.click()
 
     hits = []
-    button = win.settings.change_now
+    button = win.settings.appearance.buttons[win.settings.appearance.value()]
     button.clicked.connect(lambda *_: hits.append(1))
     button.setFocus(Qt.TabFocusReason)
     key(Qt.Key_Return)

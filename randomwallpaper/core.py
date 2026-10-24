@@ -85,7 +85,9 @@ DEFAULTS = {
     "wallhaven_people": False,
     "wallhaven_apikey": "",
     "set_on_save": True,
-    "auto_enabled": True,
+    # Off until someone turns it on: a fresh install never changes the
+    # wallpaper by itself before it has been asked to.
+    "auto_enabled": False,
     "easter": "orthodox",
     # When, inside a period, the rotation draws a new wallpaper. "midnight"
     # is the original behaviour; the other two are for a wallpaper that

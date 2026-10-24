@@ -18,7 +18,7 @@ from PySide6.QtGui import (
     QPainterPath, QPen, QPixmap,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QAbstractItemView, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
     QListWidget, QListWidgetItem, QMenu, QPushButton, QStackedWidget,
     QStyle, QStyledItemDelegate, QVBoxLayout, QWidget,
 )
@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
 from .. import core
 from . import style
 from .style import CATEGORY_COLORS, touch_scroll
-from .widgets import label
+from .widgets import Picker, label
 from ..paths import CACHE_DIR, IS_ANDROID
 
 # Smaller on a phone, so two tiles share its width rather than one sitting
@@ -215,7 +215,7 @@ class LibraryPage(QWidget):
             head.addWidget(self.search, 1)
         # Everything, or only what is pinned to one category: the shuffle
         # set, a season, a holiday — each with how many it holds.
-        self.show_only = QComboBox()
+        self.show_only = Picker()
         self.show_only.setToolTip("Show every wallpaper, or only the ones in "
                                   "the shuffle set or pinned to a season or holiday")
         self.show_only.addItem("All", None)

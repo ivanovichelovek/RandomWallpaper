@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 from .. import __version__, core, schedule, update
 from ..paths import IS_ANDROID
 from .style import Switch, theme as look, touch_scroll
-from .widgets import Choice, Segmented, card, label, repolish, row, rule, titled
+from .widgets import Choice, Picker, Segmented, card, label, repolish, row, rule, titled
 
 
 class _UpdateDialog(QDialog):
@@ -166,7 +166,7 @@ class SettingsPage(QWidget):
 
         # Easter: only the calendar has an Easter to date.
         self.rite_row = QWidget()
-        rite = QHBoxLayout(self.rite_row)
+        rite = QVBoxLayout(self.rite_row) if IS_ANDROID else QHBoxLayout(self.rite_row)
         rite.setContentsMargins(0, 4, 0, 0)
         rite.setSpacing(10)
         rite.addWidget(label("Easter dates", "help"))
@@ -180,7 +180,8 @@ class SettingsPage(QWidget):
         self.easter_western.toggled.connect(lambda *_: self.apply())
         rite.addWidget(self.easter_orthodox)
         rite.addWidget(self.easter_western)
-        rite.addStretch(1)
+        if not IS_ANDROID:
+            rite.addStretch(1)
         self.rotation_cards["calendar"].extra.addWidget(self.rite_row)
         auto.addWidget(label("Pin wallpapers to a season or holiday, or star "
                              "them for the shuffle set, on the Saved tab.",
@@ -229,7 +230,7 @@ class SettingsPage(QWidget):
         # ── what happens next ──
         note = QFrame()
         note.setProperty("class", "note")
-        note_layout = QHBoxLayout(note)
+        note_layout = QVBoxLayout(note) if IS_ANDROID else QHBoxLayout(note)
         note_layout.setContentsMargins(14, 10, 10, 10)
         note_layout.setSpacing(10)
         next_text = QVBoxLayout()
@@ -242,14 +243,15 @@ class SettingsPage(QWidget):
         self.change_now = QPushButton("Change now")
         self.change_now.setProperty("class", "accent")
         self.change_now.clicked.connect(lambda: self.retick(force=True))
-        note_layout.addWidget(self.change_now, 0, Qt.AlignVCenter)
+        note_layout.addWidget(self.change_now, 0,
+                              Qt.AlignLeft if IS_ANDROID else Qt.AlignVCenter)
         auto.addWidget(note)
 
         # The rotation only runs while the window is closed if something runs
         # it: a systemd timer, a LaunchAgent or a scheduled task. Hidden until
         # a check finds none — that check is a subprocess on Windows, so it
         # runs off the UI thread.
-        timer_row = QHBoxLayout()
+        timer_row = QVBoxLayout() if IS_ANDROID else QHBoxLayout()
         auto.addLayout(timer_row)
         self.timer_status = label(
             "Nothing is scheduled to run it while this window is closed.",
@@ -325,10 +327,11 @@ class SettingsPage(QWidget):
         self.minimum = self._combo([m[0] for m in core.MINIMUMS])
         self.minimum.setCurrentIndex(self._pos(core.MINIMUMS, prefs["minimum"]))
         self.minimum.currentIndexChanged.connect(self.apply)
+        # One above the other on a phone: two combo boxes abreast do not fit.
         shape.addWidget(label("Orientation", "help"), 0, 0)
-        shape.addWidget(label("Minimum resolution", "help"), 0, 1)
         shape.addWidget(self.orientation, 1, 0)
-        shape.addWidget(self.minimum, 1, 1)
+        shape.addWidget(label("Minimum resolution", "help"), *((2, 0) if IS_ANDROID else (0, 1)))
+        shape.addWidget(self.minimum, *((3, 0) if IS_ANDROID else (1, 1)))
 
         # ══ right: screens ═══════════════════════════════════════════════
         screens_card, screens = card(spacing=10)
@@ -523,8 +526,7 @@ class SettingsPage(QWidget):
 
     @staticmethod
     def _combo(options):
-        from PySide6.QtWidgets import QComboBox
-        combo = QComboBox()
+        combo = Picker()
         combo.addItems(options)
         return combo
 

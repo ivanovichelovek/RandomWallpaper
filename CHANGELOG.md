@@ -5,6 +5,12 @@ the app shows when it offers that update.
 
 ## 1.4.1
 
+- Android: the Settings tab fits the phone's width. Rows that do not fit
+  side by side stack, and nothing scrolls sideways any more.
+- Android: Theme, Orientation and Minimum resolution in Settings no longer
+  crash the app. Their lists open as a sheet inside the app.
+- A fresh install no longer changes the wallpaper by itself. Changing it
+  automatically is off until you switch it on in Settings.
 - The update offer now shows what changed — every release since the one
   you have, not only the latest.
 - The Saved tab can show only the wallpapers pinned to one season or

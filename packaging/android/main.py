@@ -199,16 +199,18 @@ def tour(win):
         print("rw-tour: opened", flush=True)
 
     def pick_combo(combo, index):
+        # A tap on the entry in the sheet the Picker opened.
         from PySide6.QtCore import QEvent, QPointF, Qt
         from PySide6.QtGui import QMouseEvent
-        from PySide6.QtWidgets import QApplication
-        view = combo.view()
-        rect = view.visualRect(view.model().index(index, 0))
-        at = QPointF(rect.center())
-        print(f"rw-tour: tapping row {index} at {rect.center()}", flush=True)
+        from PySide6.QtWidgets import QApplication, QPushButton
+        if combo.sheet is None:
+            print("rw-tour: NOT picked: no sheet open", flush=True)
+            return
+        button = combo.sheet.findChildren(QPushButton)[index]
+        at = QPointF(button.rect().center())
         for kind in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
-            QApplication.sendEvent(view.viewport(), QMouseEvent(
-                kind, at, view.viewport().mapToGlobal(at), Qt.LeftButton,
+            QApplication.sendEvent(button, QMouseEvent(
+                kind, at, button.mapToGlobal(at), Qt.LeftButton,
                 Qt.LeftButton if kind == QEvent.MouseButtonPress else Qt.NoButton,
                 Qt.NoModifier))
         print(f"rw-tour: picked {combo.currentText()!r}", flush=True)

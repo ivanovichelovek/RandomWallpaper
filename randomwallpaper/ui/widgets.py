@@ -2,11 +2,13 @@
 control and a radio card. Each only sets an objectName or a "class"
 property; what that looks like is in style.py.
 """
-from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QButtonGroup, QFrame, QHBoxLayout, QLabel, QPushButton, QRadioButton,
-    QVBoxLayout, QWidget,
+    QBoxLayout, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel,
+    QPushButton, QRadioButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
+
+from ..paths import IS_ANDROID
 
 
 def repolish(widget):
@@ -14,11 +16,13 @@ def repolish(widget):
     widget.style().polish(widget)
 
 
-def label(text="", cls=None, wrap=False):
+def label(text="", cls=None, wrap=None):
+    """A QLabel in a role. On a phone every one wraps unless told not to:
+    a line wider than the screen widens the whole page with it."""
     w = QLabel(text)
     if cls:
         w.setProperty("class", cls)
-    w.setWordWrap(wrap)
+    w.setWordWrap(IS_ANDROID if wrap is None else wrap)
     return w
 
 
@@ -44,7 +48,7 @@ def titled(title, help_text=None):
     column = QVBoxLayout(box)
     column.setContentsMargins(0, 0, 0, 0)
     column.setSpacing(2)
-    column.addWidget(label(title, "strong"))
+    column.addWidget(label(title, "strong", wrap=True))
     helper = None
     if help_text is not None:
         helper = label(help_text, "help", wrap=True)
@@ -52,15 +56,40 @@ def titled(title, help_text=None):
     return box, helper
 
 
+class Row(QWidget):
+    """A setting row: what it is on the left, its control on the right — or
+    the control under it, when the two do not fit side by side."""
+
+    def __init__(self, left, right, stretch_left=True):
+        super().__init__()
+        self.left, self.right = left, right
+        self.box = QBoxLayout(QBoxLayout.LeftToRight, self)
+        self.box.setContentsMargins(0, 0, 0, 0)
+        self.box.setSpacing(12)
+        if isinstance(left, QLabel):
+            left.setWordWrap(True)      # a narrow screen wraps it, never widens
+        self.box.addWidget(left, 1 if stretch_left else 0)
+        self.box.addWidget(right, 0, Qt.AlignVCenter)
+
+    def minimumSizeHint(self):
+        hint = super().minimumSizeHint()
+        return QSize(max(self.left.minimumSizeHint().width(),
+                         self.right.minimumSizeHint().width()), hint.height())
+
+    def resizeEvent(self, event):
+        # Side by side while the left keeps a fair share next to the control.
+        need = self.right.sizeHint().width() + self.box.spacing() + 120
+        across = event.size().width() >= need
+        direction = QBoxLayout.LeftToRight if across else QBoxLayout.TopToBottom
+        if self.box.direction() != direction:
+            self.box.setDirection(direction)
+            self.box.setAlignment(self.right, Qt.AlignVCenter if across else Qt.AlignLeft)
+            QTimer.singleShot(0, self.updateGeometry)
+        super().resizeEvent(event)
+
+
 def row(left, right, stretch_left=True):
-    """A setting row: what it is on the left, its control on the right."""
-    box = QWidget()
-    layout = QHBoxLayout(box)
-    layout.setContentsMargins(0, 0, 0, 0)
-    layout.setSpacing(12)
-    layout.addWidget(left, 1 if stretch_left else 0)
-    layout.addWidget(right, 0, Qt.AlignVCenter)
-    return box
+    return Row(left, right, stretch_left)
 
 
 class Segmented(QFrame):
@@ -78,9 +107,10 @@ class Segmented(QFrame):
         super().__init__()
         self.setProperty("class", "segmented")
         self.setProperty("strong", strong)
-        layout = QHBoxLayout(self)
+        layout = QBoxLayout(QBoxLayout.LeftToRight, self)
         layout.setContentsMargins(3, 3, 3, 3)
         layout.setSpacing(2)
+        self.box = layout
         self.group = QButtonGroup(self)
         self.group.setExclusive(True)
         self.buttons = {}
@@ -97,6 +127,34 @@ class Segmented(QFrame):
         self.keys = [key for _, key in options]
         if self.keys:
             self.buttons[self.keys[0]].setChecked(True)
+
+    # Side by side when they fit, one above the other when they do not — a
+    # phone in portrait has no room for "Once a day · Every few hours · At
+    # set times" in a row, and a row that does not fit widens the whole page.
+    def _row_width(self):
+        m = self.box.contentsMargins()
+        return (sum(b.sizeHint().width() for b in self.buttons.values())
+                + self.box.spacing() * (len(self.buttons) - 1) + m.left() + m.right())
+
+    def sizeHint(self):
+        # What it would like is always the row, so a layout that can give
+        # the room gets it back side by side after a narrow spell.
+        return QSize(self._row_width(), super().sizeHint().height())
+
+    def minimumSizeHint(self):
+        m = self.box.contentsMargins()
+        widest = max((b.minimumSizeHint().width() for b in self.buttons.values()), default=0)
+        return QSize(widest + m.left() + m.right(), super().minimumSizeHint().height())
+
+    def resizeEvent(self, event):
+        across = event.size().width() >= self._row_width()
+        direction = QBoxLayout.LeftToRight if across else QBoxLayout.TopToBottom
+        if self.box.direction() != direction:
+            self.box.setDirection(direction)
+            self.setProperty("stacked", not across)
+            repolish(self)
+            QTimer.singleShot(0, self.updateGeometry)
+        super().resizeEvent(event)
 
     def eventFilter(self, watched, event):
         # The arrow keys pick the option beside the current one, as they do
@@ -206,3 +264,100 @@ class Choice(QFrame):
         self.radio.setChecked(on)
         self.setProperty("checked", on)
         repolish(self)
+
+
+class Picker(QComboBox):
+    """A combo box. On a phone its list opens as a sheet inside the window
+    rather than as Qt's popup: the popup is a window of its own, which on
+    Android crashed the app the moment it was tapped."""
+
+    def __init__(self):
+        super().__init__()
+        if IS_ANDROID:
+            # As narrow as the screen needs: the longest entry does not
+            # set the width.
+            self.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            self.setMinimumContentsLength(8)
+            self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.sheet = None
+
+    def showPopup(self):
+        if not IS_ANDROID:
+            super().showPopup()
+            return
+        if self.sheet is None:
+            self.sheet = _Sheet(self)
+            self.sheet.destroyed.connect(lambda *_: setattr(self, "sheet", None))
+
+
+class _Sheet(QFrame):
+    """A Picker's list: the window dimmed, the choices on a card at the
+    bottom, the current one marked. A choice picks and closes; a tap on the
+    dimmed part, Back or Esc closes."""
+
+    def __init__(self, picker):
+        host = picker.window()
+        super().__init__(host)
+        self.picker = picker
+        self.setObjectName("sheetShade")
+        self.setGeometry(host.rect())
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(12, 12, 12, 12)
+        outer.addStretch(1)
+        panel = QFrame()
+        panel.setObjectName("sheet")
+        outer.addWidget(panel)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(8, 10, 8, 10)
+        layout.setSpacing(2)
+        scroller = QScrollArea()
+        scroller.setWidgetResizable(True)
+        scroller.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroller.setFrameShape(QFrame.NoFrame)
+        listing = QWidget()
+        items = QVBoxLayout(listing)
+        items.setContentsMargins(0, 0, 0, 0)
+        items.setSpacing(2)
+        for i in range(picker.count()):
+            button = QPushButton(picker.itemIcon(i), picker.itemText(i))
+            button.setProperty("class", "sheetItem")
+            button.setCheckable(True)
+            button.setChecked(i == picker.currentIndex())
+            button.clicked.connect(lambda _=False, i=i: self.pick(i))
+            items.addWidget(button)
+        scroller.setWidget(listing)
+        from .style import touch_scroll
+        touch_scroll(scroller)
+        # Tall enough for every entry, up to most of the window.
+        want = listing.sizeHint().height() + 4
+        scroller.setFixedHeight(min(want, int(host.height() * 0.7)))
+        layout.addWidget(scroller)
+        host.installEventFilter(self)
+        self.show()
+        self.raise_()
+        self.setFocus()
+
+    def pick(self, index):
+        self.close_sheet()
+        if index != self.picker.currentIndex():
+            self.picker.setCurrentIndex(index)
+            self.picker.activated.emit(index)
+
+    def close_sheet(self):
+        self.hide()
+        self.picker.window().removeEventFilter(self)
+        QTimer.singleShot(0, self.deleteLater)
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Resize:
+            self.setGeometry(watched.rect())
+        return False
+
+    def mousePressEvent(self, event):
+        self.close_sheet()          # a tap outside the card
+
+    def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Escape, Qt.Key_Back):
+            self.close_sheet()
+            return
+        super().keyPressEvent(event)
