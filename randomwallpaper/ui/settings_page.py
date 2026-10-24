@@ -367,6 +367,17 @@ class SettingsPage(QWidget):
         shape.addWidget(label("Minimum resolution", "help"), *((2, 0) if IS_ANDROID else (0, 1)))
         shape.addWidget(self.minimum, *((3, 0) if IS_ANDROID else (1, 1)))
 
+        reel.addWidget(rule())
+        self.reel_forget = Switch()
+        self.reel_forget.setChecked(prefs.get("reel_forget", True))
+        self.reel_forget.toggled.connect(self.apply)
+        forget_box, _ = titled(
+            "Forget pictures far behind",
+            f"More than {core.REEL_BEHIND} back on the Random tab, they are "
+            "dropped and their files deleted. Off: everything stays until "
+            "the app closes.")
+        reel.addWidget(row(forget_box, self.reel_forget))
+
         # ══ right: screens ═══════════════════════════════════════════════
         screens_card, screens = card(spacing=10)
         columns.right.addWidget(screens_card)
@@ -775,6 +786,7 @@ class SettingsPage(QWidget):
             "screens": self._screens(),
             "primary_output": self.main_output.currentData() or "",
             "check_updates": self.check_updates.isChecked(),
+            "reel_forget": self.reel_forget.isChecked(),
             "colors": self.colors.value(),
             "appearance": self.appearance.value(),
         })

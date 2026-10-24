@@ -381,6 +381,7 @@ class Theme:
         self.applied = None
         self.t = tokens()
         self.listeners = []
+        self._settle = None
 
     def dark(self):
         mode = (self.prefs or {}).get("appearance", "system")
@@ -419,8 +420,22 @@ class Theme:
             listener(self.t)
 
     def set_seed(self, seed):
+        """A new frame's colour, taken up once the reel stops moving.
+
+        Repainting the window is a few hundred milliseconds of
+        setStyleSheet; done on every frame of a quick run of swipes it was
+        the lag between them. The last frame's colour is the one that
+        counts, so the repaint waits until no new one has come for a
+        moment.
+        """
         self.seed = seed
-        self.apply()
+        if self._settle is None:
+            from PySide6.QtCore import QTimer
+            self._settle = QTimer()
+            self._settle.setSingleShot(True)
+            self._settle.setInterval(350)
+            self._settle.timeout.connect(self.apply)
+        self._settle.start()
 
 
 theme = Theme()
@@ -486,8 +501,13 @@ class FocusRing(QObject):
         app.installEventFilter(self)
         app.focusChanged.connect(lambda *_: self.mark())
 
+    WATCHED = {QEvent.KeyPress, QEvent.MouseButtonPress, QEvent.TouchBegin,
+               QEvent.ToolTip}
+
     def eventFilter(self, watched, event):
         kind = event.type()
+        if kind not in self.WATCHED:
+            return False        # the hot path: a repaint sends thousands
         if IS_ANDROID and kind == QEvent.ToolTip:
             # A tooltip is a popup window, which aborts the app on a phone
             # (see widgets.Sheet) — and a long press is not a hover anyway.

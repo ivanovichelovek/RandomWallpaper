@@ -185,6 +185,35 @@ def main():
     check("Esc leaves the search box, not the app",
           win.isVisible() and app.focusWidget() is tiles)
 
+    # ── the reel forgets what is far behind ──────────────────────────────
+    import time as _time
+    reel = win.reel_page
+    reel.top_up = lambda: None          # no downloads: frames made here
+    core.CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    made = []
+    for i in range(core.REEL_BEHIND + 6):
+        path = core.CACHE_DIR / f"pending-smoke-{i}.png"
+        image = QImage(32, 18, QImage.Format_RGB32)
+        image.fill(QColor(10 * i, 80, 120))
+        image.save(str(path))
+        made.append({"name": f"smoke-{i}", "path": path, "ext": ".png",
+                     "width": 32, "height": 18, "credit": "", "source": "Test",
+                     "bytes": 1, "url": ""})
+    reel.frames, reel.index = list(made), 0
+    win.prefs["reel_forget"] = True
+    for _ in range(core.REEL_BEHIND + 4):
+        reel.go(reel.index + 1)
+    _time.sleep(0.3)                    # the files go on a worker thread
+    check("the reel keeps REEL_BEHIND frames behind and no more",
+          reel.index == core.REEL_BEHIND
+          and reel.current()["name"] == f"smoke-{core.REEL_BEHIND + 4}")
+    check("and the frames it forgot are deleted from the cache",
+          not made[0]["path"].exists() and made[-1]["path"].exists())
+    win.prefs["reel_forget"] = False
+    before = len(reel.frames)
+    reel.go(reel.index + 1)
+    check("switched off, nothing is forgotten", len(reel.frames) == before)
+
     win.close()
     check("window closes without raising", True)
 

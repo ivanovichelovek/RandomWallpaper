@@ -8,6 +8,7 @@ The frame on screen also sets the window's colours (style.theme), and its
 own few colours are shown as swatches beside its name.
 """
 import http.client
+import threading
 import urllib.error
 from pathlib import Path
 
@@ -278,8 +279,34 @@ class ReelPage(QWidget):
     def go(self, index):
         if 0 <= index < len(self.frames):
             self.index = index
+            self._forget_behind()
             self.top_up()
             self.sync()
+
+    def _forget_behind(self):
+        """With reel_forget on, frames more than REEL_BEHIND back go.
+
+        Cheap on the UI thread by design: the list is sliced and the index
+        moved, the picture showing is the same file so it is not loaded
+        again, and the files are deleted on a worker thread.
+        """
+        if not self.prefs.get("reel_forget", True):
+            return
+        drop = self.index - core.REEL_BEHIND
+        if drop <= 0:
+            return
+        gone = self.frames[:drop]
+        del self.frames[:drop]
+        self.index -= drop
+        paths = [Path(f["path"]) for f in gone]
+
+        def unlink():
+            for path in paths:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        threading.Thread(target=unlink, daemon=True).start()
 
     def retheme(self):
         """New filters arrived (a later launch, or Settings changed). Frames
@@ -299,6 +326,7 @@ class ReelPage(QWidget):
     def advance(self):
         if self.index >= len(self.frames):
             self.index = max(0, len(self.frames) - 1)
+        self._forget_behind()
         self.top_up()
         self.sync()
 

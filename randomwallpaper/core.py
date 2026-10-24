@@ -70,6 +70,7 @@ def _agent(url):
 
 TIMEOUT = 30
 REEL_AHEAD = 6          # frames kept downloaded ahead of the current one
+REEL_BEHIND = 8         # frames kept behind it, when reel_forget is on
 # A themed pool can be small — wallhaven has under a hundred Easter wallpapers
 # — and then two random picks land on the same image often enough to notice.
 # Duplicates are dropped and refetched, but only so many times before the reel
@@ -100,6 +101,9 @@ DEFAULTS = {
     "wallhaven_people": False,
     "wallhaven_apikey": "",
     "set_on_save": True,
+    # The Random tab forgets frames more than REEL_BEHIND behind the one
+    # showing, files and all, so a long session does not fill the cache.
+    "reel_forget": True,
     # Off until someone turns it on: a fresh install never changes the
     # wallpaper by itself before it has been asked to.
     "auto_enabled": False,
