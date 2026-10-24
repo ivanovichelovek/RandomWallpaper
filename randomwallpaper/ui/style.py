@@ -1,41 +1,29 @@
-"""The look: a contact sheet on a light table.
+"""The look: the wallpaper picks the colours.
 
-Near-black with a blue bias, hairline borders instead of shadows, one warm
-accent, monospace for anything numeric — the same palette the GTK version
-used, carried over to Qt style sheets and an explicit QPalette.
+One hue — taken from the picture on screen, or a fixed one — becomes a
+small set of tokens (ground, surface, well, border, text, accent …) for a
+dark or a light window, and those fill both the stylesheet and the QPalette.
+Nothing else in the UI names a colour: pages give widgets an objectName or a
+"class" property and the stylesheet below says what that looks like, so a
+new hue repaints everything at once.
 
 Qt popups (combo box drop-downs, menus) are top-level windows of their own
-and do not inherit a widget's style sheet the way a GTK popover inherits from
-its parent's CSS provider, so the palette below is set application-wide and
-the stylesheet below addresses `QComboBox QAbstractItemView` directly rather
-than relying on inheritance.
+and do not inherit a widget's style sheet, so the palette is set
+application-wide and the stylesheet addresses `QComboBox QAbstractItemView`
+and `QMenu` directly.
 """
+import colorsys
 from pathlib import Path
 
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtCore import QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QPainter, QPalette
+from PySide6.QtWidgets import QCheckBox
 
-BG = "#0E0F16"
-BG_STAGE = "#0A0B10"
-BG_BAR = "#171925"
-BG_CARD = "#171925"
-BG_BTN = "#1E2130"
-BG_BTN_HOVER = "#262A3D"
-BORDER = "#262A3D"
-BORDER_HOVER = "#39405C"
-FG = "#E6E7F0"
-FG_DIM = "#8B90A8"
-FG_DISABLED = "#4C5170"
-ACCENT = "#F2D98C"
-ACCENT_HOVER = "#F7E4A8"
-ACCENT_ACTIVE = "#D9C079"
-DANGER = "#E06C6C"
-DANGER_BG = "#33202A"
-DANGER_BORDER = "#6B3A44"
+from ..paths import IS_ANDROID
 
-# One colour per season and holiday, for the category tags on the Downloaded
-# tab: told apart at a glance, and each one what the category looks like —
-# spring green, summer gold, autumn orange, winter ice. Bright enough to read
-# on the near-black tiles, drawn over a dim tint of themselves.
+# One colour per season and holiday, for the category marks on the Saved tab:
+# told apart at a glance, and each one what the category looks like — spring
+# green, summer gold, autumn orange, winter ice. They do not follow the tint.
 CATEGORY_COLORS = {
     "spring": "#8FD694",
     "summer": "#F2C94C",
@@ -45,313 +33,458 @@ CATEGORY_COLORS = {
     "christmas": "#E86A6A",
     "valentine": "#F08CC0",
     "easter": "#C8E07A",
-    # The accent: the shuffle set is the one category the tiles outline.
     "shuffle": "#F2D98C",
 }
 
-MONO_FONT = '"JetBrains Mono", "Consolas", "DejaVu Sans Mono", monospace'
-SANS_FONT = '"Segoe UI", "Noto Sans", "Helvetica Neue", sans-serif'
+FONTS_DIR = Path(__file__).resolve().parent.parent / "resources" / "fonts"
+SANS = "Space Grotesk"
+MONO = "DM Mono"
 
-# Stylesheet url()s want a path; forward slashes work on Windows too.
-RESOURCES = (Path(__file__).resolve().parent.parent / "resources").as_posix()
+# The fixed colour, and the hue a grey picture falls back to: ember.
+DEFAULT_SEED = (22 / 360, 0.75)
 
-QSS = f"""
-/* Colour and type for everything, but a background only where one is
-   meant: the window, the bars, the cards, the stage, the controls. A
-   background on every QWidget painted each layout box and label in the
-   window's colour over whatever it sat on — a lighter rectangle around the
-   perforations on the darker stage, a darker one behind each label on a
-   lighter card. */
+
+# ── tokens ──────────────────────────────────────────────────────────────────
+def _hsl(h, s, l):
+    r, g, b = colorsys.hls_to_rgb(h % 1.0, max(0.0, min(1.0, l)), max(0.0, min(1.0, s)))
+    return "#{:02X}{:02X}{:02X}".format(round(r * 255), round(g * 255), round(b * 255))
+
+
+def tokens(seed=DEFAULT_SEED, dark=True):
+    """The colours for one hue. Lightness is fixed per token and saturation
+    clamped, whatever the picture: a neon or a grey wallpaper still gives
+    text that reads on its ground."""
+    h, s = seed
+    tint = min(s, 0.6)          # how much of the hue the neutrals carry
+    if dark:
+        return {
+            "bg": _hsl(h, tint * 0.45, 0.085),
+            "surface": _hsl(h, tint * 0.42, 0.135),
+            "well": _hsl(h, tint * 0.38, 0.185),
+            "border": _hsl(h, tint * 0.32, 0.22),
+            "fg": _hsl(h, tint * 0.55, 0.94),
+            "dim": _hsl(h, tint * 0.22, 0.72),
+            "faint": _hsl(h, tint * 0.18, 0.42),
+            "accent": _hsl(h, max(0.5, min(s, 0.85)), 0.70),
+            "accentText": _hsl(h, max(0.5, min(s, 0.85)), 0.80),
+            "accentSoft": _hsl(h, tint * 0.6, 0.20),
+            "onAccent": _hsl(h, 0.6, 0.10),
+            "danger": "#FF9C8A",
+            "dangerSoft": "#3A1F22",
+            "shadow": "#000000",
+        }
+    return {
+        "bg": _hsl(h, tint * 0.75, 0.965),
+        "surface": "#FFFFFF",
+        "well": _hsl(h, tint * 0.65, 0.92),
+        "border": _hsl(h, tint * 0.5, 0.86),
+        "fg": _hsl(h, tint * 0.55, 0.12),
+        "dim": _hsl(h, tint * 0.2, 0.38),
+        "faint": _hsl(h, tint * 0.15, 0.62),
+        "accent": _hsl(h, max(0.5, min(s, 0.8)), 0.42),
+        "accentText": _hsl(h, max(0.5, min(s, 0.8)), 0.33),
+        "accentSoft": _hsl(h, max(0.45, min(s, 0.8)), 0.91),
+        "onAccent": "#FFFFFF",
+        "danger": "#B3261E",
+        "dangerSoft": "#FBE4E1",
+        "shadow": "#000000",
+    }
+
+
+def seed_from_image(image):
+    """The hue (and how colourful it is) of a QImage, as (h, s) in 0–1.
+
+    The most colourful hue rather than the average: an average of a blue sky
+    and an orange street is a muddy grey nobody sees in the picture. Hues are
+    binned and each pixel votes with its saturation × value, so dark and
+    washed-out pixels count for little. A picture with nothing colourful in
+    it falls back to the default hue, barely saturated.
+    """
+    if image is None or image.isNull():
+        return DEFAULT_SEED
+    small = image.scaled(32, 32, Qt.IgnoreAspectRatio, Qt.FastTransformation)
+    bins = [0.0] * 36
+    sats = [0.0] * 36
+    for y in range(small.height()):
+        for x in range(small.width()):
+            c = small.pixelColor(x, y)
+            h, s, v = c.hsvHueF(), c.hsvSaturationF(), c.valueF()
+            if h < 0 or s < 0.12 or v < 0.15:
+                continue
+            weight = s * v
+            k = int(h * 36) % 36
+            bins[k] += weight
+            sats[k] += s * weight
+    total = sum(bins)
+    if total < 4:                       # a grey, black or white picture
+        return (DEFAULT_SEED[0], 0.12)
+    best = max(range(36), key=lambda k: bins[k] + 0.5 * (bins[k - 1] + bins[(k + 1) % 36]))
+    return ((best + 0.5) / 36, sats[best] / bins[best] if bins[best] else 0.5)
+
+
+def palette_from_image(image, count=5):
+    """The few colours that make up a picture, most of it first — the
+    swatches shown beside a frame's name."""
+    if image is None or image.isNull():
+        return []
+    small = image.scaled(24, 24, Qt.IgnoreAspectRatio, Qt.FastTransformation)
+    buckets = {}
+    for y in range(small.height()):
+        for x in range(small.width()):
+            c = small.pixelColor(x, y)
+            # 4 levels a channel: near colours fall in one bucket.
+            key = (c.red() // 64, c.green() // 64, c.blue() // 64)
+            sums = buckets.setdefault(key, [0, 0, 0, 0])
+            sums[0] += c.red()
+            sums[1] += c.green()
+            sums[2] += c.blue()
+            sums[3] += 1
+    top = sorted(buckets.values(), key=lambda v: -v[3])[:count]
+    return ["#{:02X}{:02X}{:02X}".format(r // n, g // n, b // n) for r, g, b, n in top]
+
+
+# ── the stylesheet ──────────────────────────────────────────────────────────
+def build_qss(t, sans=SANS, mono=MONO):
+    base = "15px" if IS_ANDROID else "13px"
+    return f"""
 QWidget {{
-    color: {FG};
-    font-family: {SANS_FONT};
-    font-size: 13px;
+    color: {t['fg']};
+    font-family: "{sans}";
+    font-size: {base};
 }}
-QMainWindow, #reelRoot, QDialog {{ background: {BG}; }}
-QScrollArea, QScrollArea > QWidget > QWidget {{ background: transparent; }}
-#topbar, #bottombar {{
-    background: {BG_BAR};
-    border: 0px solid {BORDER};
-}}
-#topbar {{ border-bottom: 1px solid {BORDER}; }}
-#bottombar {{ border-top: 1px solid {BORDER}; }}
+QMainWindow, #root, QDialog {{ background: {t['bg']}; }}
+QScrollArea, QScrollArea > QWidget > QWidget, QStackedWidget {{ background: transparent; }}
+QToolTip {{ background: {t['surface']}; color: {t['fg']}; border: 1px solid {t['border']}; padding: 4px 6px; }}
 
-#wordmark {{
-    font-family: {MONO_FONT};
-    font-size: 11px;
-    font-weight: 700;
-    letter-spacing: 2px;
-    color: {ACCENT};
-}}
-.eyebrow {{
-    font-family: {MONO_FONT};
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 1.6px;
-    color: {FG_DIM};
-}}
-.mono {{
-    font-family: {MONO_FONT};
-    font-size: 11px;
-    color: {FG_DIM};
-}}
-#frameName {{
-    font-family: {MONO_FONT};
-    font-size: 13px;
-    color: {FG};
-}}
-
-#stage {{ background: {BG_STAGE}; }}
-
-QTabWidget::pane {{ border: 0; background: transparent; }}
-QTabBar::tab {{
+/* ── navigation ── */
+#rail, #bottomNav {{ background: {t['bg']}; }}
+#bottomNav {{ border-top: 1px solid {t['border']}; }}
+QToolButton.nav {{
     background: transparent;
-    color: {FG_DIM};
-    border: 1px solid transparent;
-    border-radius: 5px;
-    padding: 6px 16px;
-    margin: 2px;
-    font-size: 12px;
-}}
-QTabBar::tab:hover {{ background: {BG_BTN_HOVER}; color: {FG}; }}
-QTabBar::tab:selected {{
-    background: {BG_BTN_HOVER};
-    border-color: {BORDER_HOVER};
-    color: {ACCENT};
-    font-weight: 700;
-}}
-
-#library {{ background: {BG_STAGE}; }}
-QListWidget#library {{
+    color: {t['dim']};
     border: none;
-}}
-QListWidget#library::item {{
-    padding: 6px;
-    border: 1px solid {BORDER};
-    border-radius: 5px;
-    background: #14151F;
-    margin: 4px;
-}}
-QListWidget#library::item:hover {{ border-color: {BORDER_HOVER}; }}
-QListWidget#library::item:selected {{
-    border-color: {ACCENT};
-    background: #1E2130;
-    color: {FG};
-}}
-
-#confirm {{
-    background: {DANGER_BG};
-    border-top: 1px solid {DANGER_BORDER};
-    border-bottom: 1px solid {DANGER_BORDER};
-}}
-#confirmText {{ color: {FG}; font-size: 12px; }}
-
-#tileTags {{
-    font-family: {MONO_FONT};
-    font-size: 10px;
-    color: {ACCENT};
-}}
-
-QPushButton {{
-    background: {BG_BTN};
-    color: {FG};
-    border: 1px solid {BORDER};
-    border-radius: 5px;
-    padding: 7px 16px;
-    font-size: 13px;
-}}
-QPushButton:hover {{ background: {BG_BTN_HOVER}; border-color: {BORDER_HOVER}; }}
-QPushButton:pressed {{ background: {BG_BAR}; }}
-QPushButton:checked {{ color: {ACCENT}; border-color: {ACCENT}; }}
-QPushButton:disabled {{ color: {FG_DISABLED}; border-color: {BG_BTN}; background: #141622; }}
-QPushButton:focus {{ outline: none; border: 1px solid {ACCENT}; }}
-
-QPushButton.accent {{
-    background: {ACCENT};
-    color: #14151F;
-    border-color: {ACCENT};
-    font-weight: 700;
-}}
-QPushButton.accent:hover {{ background: {ACCENT_HOVER}; border-color: {ACCENT_HOVER}; }}
-QPushButton.accent:pressed {{ background: {ACCENT_ACTIVE}; }}
-QPushButton.accent:disabled {{ background: #141622; color: {FG_DISABLED}; border-color: {BG_BTN}; }}
-
-QPushButton.danger {{ color: {DANGER}; border-color: {DANGER_BORDER}; }}
-QPushButton.danger:hover {{ background: {DANGER_BG}; border-color: {DANGER_BORDER}; }}
-
-QPushButton.icon {{ padding: 6px 12px; font-size: 15px; }}
-/* The ‹ › frame buttons are QToolButtons; unstyled, Windows and macOS draw
-   them as light native squares on the dark bar. */
-QToolButton.icon {{
-    background: {BG_BTN};
-    color: {FG};
-    border: 1px solid {BORDER};
-    border-radius: 5px;
-    padding: 4px 10px;
-    font-size: 15px;
-}}
-QToolButton.icon:hover {{ background: {BG_BTN_HOVER}; border-color: {BORDER_HOVER}; }}
-QToolButton.icon:disabled {{ color: {FG_DISABLED}; background: #141622; border-color: {BG_BTN}; }}
-
-#reel {{ background: {BG_STAGE}; border-top: 1px solid {BORDER}; }}
-QToolButton.reelFrame {{
-    border: 1px solid {BORDER};
-    border-radius: 3px;
-    background: #14151F;
+    border-radius: 24px;
     padding: 0;
 }}
-QToolButton.reelFrame:hover {{ border-color: {BORDER_HOVER}; }}
-QToolButton.reelFrame[current="true"] {{ border-color: {ACCENT}; border-width: 2px; }}
-.perf {{ background: {FG_DIM}; border-radius: 1px; }}
-
-#toast {{
-    background: {BG_BTN_HOVER};
-    color: {FG};
-    border: 1px solid {BORDER_HOVER};
-    border-radius: 5px;
-    padding: 9px 14px;
+QToolButton.nav:hover {{ background: {t['well']}; }}
+QToolButton.nav:checked {{ background: {t['accentSoft']}; color: {t['accentText']}; }}
+QToolButton.navBottom {{
+    background: transparent;
+    color: {t['dim']};
+    border: none;
+    padding: 4px 0;
     font-size: 12px;
 }}
-.hint {{ color: {DANGER}; font-size: 12px; }}
-.placeholder {{ color: {FG_DISABLED}; font-size: 13px; }}
+QToolButton.navBottom:checked {{ color: {t['accentText']}; font-weight: 600; }}
 
-#card {{
-    background: {BG_CARD};
-    border: 1px solid {BORDER};
-    border-radius: 6px;
+/* ── text ── */
+.h1 {{ font-size: 24px; font-weight: 700; }}
+.h2 {{ font-size: 16px; font-weight: 700; }}
+.title {{ font-size: 14px; font-weight: 600; }}
+.help {{ color: {t['dim']}; font-size: 12px; }}
+.mono {{ font-family: "{mono}"; font-size: 11px; color: {t['dim']}; }}
+.strong {{ font-weight: 600; }}
+.error {{ color: {t['danger']}; font-size: 12px; }}
+.accentText {{ color: {t['accentText']}; font-weight: 600; }}
+.placeholder {{ color: {t['faint']}; font-size: 14px; }}
+
+/* ── surfaces ── */
+QFrame.card {{ background: {t['surface']}; border-radius: 18px; }}
+QFrame.card QLabel, QFrame.card QCheckBox, QFrame.card QRadioButton {{ background: transparent; }}
+QFrame.note {{ background: {t['accentSoft']}; border-radius: 14px; }}
+QFrame.note QLabel {{ background: transparent; }}
+QFrame.rule {{ background: {t['border']}; border: none; max-height: 1px; min-height: 1px; }}
+QFrame.picture {{ background: {t['surface']}; border-radius: 20px; }}
+#pill {{ background: {t['surface']}; border: 1px solid {t['border']}; border-radius: 24px; }}
+#pill QLabel {{ background: transparent; }}
+#confirm {{ background: {t['dangerSoft']}; border: 1px solid {t['danger']}; border-radius: 18px; }}
+#confirm QLabel {{ background: transparent; }}
+#toast {{
+    background: {t['surface']};
+    color: {t['fg']};
+    border: 1px solid {t['border']};
+    border-radius: 14px;
+    padding: 10px 16px;
+    font-size: 12px;
 }}
 
+/* ── buttons ── */
+QPushButton {{
+    background: {t['well']};
+    color: {t['fg']};
+    border: none;
+    border-radius: 14px;
+    padding: 8px 16px;
+    min-height: 20px;
+    font-weight: 600;
+}}
+QPushButton:hover {{ background: {t['border']}; }}
+QPushButton:disabled {{ color: {t['faint']}; background: {t['well']}; }}
+QPushButton:focus {{ outline: none; }}
+QPushButton.accent {{ background: {t['accent']}; color: {t['onAccent']}; font-weight: 700; }}
+QPushButton.accent:hover {{ background: {t['accentText']}; }}
+QPushButton.accent:disabled {{ background: {t['well']}; color: {t['faint']}; }}
+QPushButton.danger {{ color: {t['danger']}; }}
+QPushButton.danger:disabled {{ color: {t['faint']}; }}
+QPushButton.round {{ border-radius: 20px; padding: 0; min-width: 40px; max-width: 40px; min-height: 40px; max-height: 40px; font-size: 18px; }}
+QPushButton.flat {{ background: transparent; }}
+QPushButton.flat:hover {{ background: {t['well']}; }}
+QPushButton::menu-indicator {{ width: 0; image: none; }}
+
+/* a segmented control: checkable buttons in a pill */
+QFrame.segmented {{ background: {t['well']}; border-radius: 15px; }}
+QPushButton.seg {{
+    background: transparent;
+    color: {t['dim']};
+    border-radius: 12px;
+    padding: 5px 12px;
+    min-height: 18px;
+    font-weight: 500;
+}}
+QPushButton.seg:hover {{ color: {t['fg']}; }}
+QPushButton.seg:checked {{ background: {t['surface']}; color: {t['fg']}; font-weight: 700; }}
+QFrame.segmented[strong="true"] QPushButton.seg:checked {{ background: {t['accent']}; color: {t['onAccent']}; }}
+
+/* a radio card: the whole card is the choice */
+QFrame.choice {{ background: transparent; border: 2px solid {t['border']}; border-radius: 14px; }}
+QFrame.choice[checked="true"] {{ background: {t['accentSoft']}; border-color: {t['accent']}; }}
+QFrame.choice QLabel, QFrame.choice QRadioButton {{ background: transparent; }}
+
+/* ── inputs ── */
 QLineEdit, QSpinBox {{
-    background: {BG_STAGE};
-    color: {FG};
-    border: 1px solid {BORDER};
-    border-radius: 4px;
-    padding: 6px 8px;
+    background: {t['well']};
+    color: {t['fg']};
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 7px 10px;
+    selection-background-color: {t['accent']};
+    selection-color: {t['onAccent']};
 }}
-QLineEdit:focus, QSpinBox:focus {{ border-color: {ACCENT}; }}
-QSpinBox::up-button, QSpinBox::down-button {{
-    background: {BG_BTN}; border: none; width: 16px;
-}}
-QSpinBox::up-button:hover, QSpinBox::down-button:hover {{ background: {BG_BTN_HOVER}; }}
-QSpinBox::up-arrow {{ image: url({RESOURCES}/arrow-up.svg); width: 8px; height: 5px; }}
-QSpinBox::down-arrow {{ image: url({RESOURCES}/arrow-down.svg); width: 8px; height: 5px; }}
-
+QLineEdit:focus, QSpinBox:focus {{ border-color: {t['accent']}; }}
+QLineEdit#search {{ border-radius: 16px; padding: 7px 14px; }}
+QSpinBox::up-button, QSpinBox::down-button {{ width: 0; border: none; }}
 QComboBox {{
-    background: {BG_BTN};
-    color: {FG};
-    border: 1px solid {BORDER};
-    border-radius: 4px;
-    padding: 6px 8px;
+    background: {t['well']};
+    color: {t['fg']};
+    border: 1px solid transparent;
+    border-radius: 10px;
+    padding: 7px 12px;
+    font-weight: 600;
 }}
-QComboBox:focus {{ border-color: {ACCENT}; }}
-QComboBox::drop-down {{ border: none; width: 20px; }}
+QComboBox:focus {{ border-color: {t['accent']}; }}
+QComboBox::drop-down {{ border: none; width: 22px; }}
 QComboBox QAbstractItemView {{
-    background: {BG_CARD};
-    color: {FG};
-    border: 1px solid {BORDER};
-    border-radius: 6px;
-    selection-background-color: {ACCENT};
-    selection-color: #14151F;
+    background: {t['surface']};
+    color: {t['fg']};
+    border: 1px solid {t['border']};
+    border-radius: 10px;
+    padding: 4px;
+    selection-background-color: {t['accentSoft']};
+    selection-color: {t['fg']};
     outline: none;
 }}
-
-/* Text sitting on a card or a bar shows the card or bar through it. The
-   QWidget rule above gives every widget the window's background, and on a
-   lighter card that drew a dark box behind each label and check box. Named
-   by type, not "#card QWidget": an id selector would outrank, and flatten,
-   the buttons' and inputs' own backgrounds. */
-#card QLabel, #card QCheckBox, #card QRadioButton,
-#bottombar QLabel, #topbar QLabel, #confirm QLabel,
-QWidget#barMeta {{ background: transparent; }}
-QCheckBox, QRadioButton {{ color: {FG}; font-size: 13px; spacing: 8px; }}
-QCheckBox::indicator, QRadioButton::indicator {{
-    width: 14px; height: 14px;
-    background: {BG_STAGE};
-    border: 1px solid {BORDER_HOVER};
+QCheckBox, QRadioButton {{ color: {t['fg']}; spacing: 10px; }}
+QRadioButton::indicator, QCheckBox::indicator {{
+    width: 16px; height: 16px;
+    background: {t['well']};
+    border: 2px solid {t['faint']};
 }}
-QRadioButton::indicator {{ border-radius: 7px; }}
-QCheckBox::indicator:checked, QRadioButton::indicator:checked {{
-    background: {ACCENT};
-    border-color: {ACCENT};
+QRadioButton::indicator {{ border-radius: 10px; }}
+QCheckBox::indicator {{ border-radius: 5px; }}
+QRadioButton::indicator:checked, QCheckBox::indicator:checked {{
+    background: {t['accent']};
+    border-color: {t['accent']};
 }}
 
+/* ── lists and scrolling ── */
+QListWidget#library {{ background: transparent; border: none; outline: none; }}
 QScrollArea {{ background: transparent; border: none; }}
-/* The step arrows at the ends of a scroll bar. Styling the bar and its
-   handle but not these leaves Fusion to draw them: a small white-edged box
-   under every bar. The bars here are thin enough to do without them. */
-QScrollBar::add-line, QScrollBar::sub-line {{
-    width: 0; height: 0; border: none; background: none;
-}}
+QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; border: none; background: none; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
 QAbstractScrollArea::corner {{ background: transparent; border: none; }}
-QScrollBar:vertical {{ background: transparent; width: 10px; }}
-QScrollBar::handle:vertical {{ background: {BORDER_HOVER}; border-radius: 5px; min-height: 24px; }}
-QScrollBar:horizontal {{ background: transparent; height: 10px; }}
-QScrollBar::handle:horizontal {{ background: {BORDER_HOVER}; border-radius: 5px; min-width: 24px; }}
+QScrollBar:vertical {{ background: transparent; width: 8px; margin: 4px 2px; }}
+QScrollBar::handle:vertical {{ background: {t['border']}; border-radius: 3px; min-height: 28px; }}
+QScrollBar:horizontal {{ background: transparent; height: 8px; margin: 2px 4px; }}
+QScrollBar::handle:horizontal {{ background: {t['border']}; border-radius: 3px; min-width: 28px; }}
 
 QMenu {{
-    background: {BG_CARD};
-    color: {FG};
-    border: 1px solid {BORDER};
-    border-radius: 6px;
-    padding: 4px;
+    background: {t['surface']};
+    color: {t['fg']};
+    border: 1px solid {t['border']};
+    border-radius: 12px;
+    padding: 6px;
 }}
-QMenu::item {{ padding: 7px 12px; border-radius: 4px; }}
-QMenu::item:selected {{ background: {BG_BTN_HOVER}; }}
+QMenu::item {{ padding: 8px 14px; border-radius: 8px; }}
+QMenu::item:selected {{ background: {t['well']}; }}
+QMenu::separator {{ height: 1px; background: {t['border']}; margin: 4px 8px; }}
 """
 
 
-MONO_CANDIDATES = ["JetBrains Mono", "Cascadia Mono", "Consolas", "SF Mono",
-                   "Menlo", "DejaVu Sans Mono", "Liberation Mono"]
-SANS_CANDIDATES = ["Segoe UI", "Noto Sans", "Helvetica Neue", "Cantarell"]
+def build_palette(t):
+    p = QPalette()
+    for group in (QPalette.Active, QPalette.Inactive):
+        p.setColor(group, QPalette.Window, QColor(t["bg"]))
+        p.setColor(group, QPalette.WindowText, QColor(t["fg"]))
+        p.setColor(group, QPalette.Base, QColor(t["well"]))
+        p.setColor(group, QPalette.AlternateBase, QColor(t["surface"]))
+        p.setColor(group, QPalette.Text, QColor(t["fg"]))
+        p.setColor(group, QPalette.Button, QColor(t["well"]))
+        p.setColor(group, QPalette.ButtonText, QColor(t["fg"]))
+        p.setColor(group, QPalette.ToolTipBase, QColor(t["surface"]))
+        p.setColor(group, QPalette.ToolTipText, QColor(t["fg"]))
+        p.setColor(group, QPalette.Highlight, QColor(t["accent"]))
+        p.setColor(group, QPalette.HighlightedText, QColor(t["onAccent"]))
+        p.setColor(group, QPalette.PlaceholderText, QColor(t["dim"]))
+        p.setColor(group, QPalette.BrightText, QColor(t["danger"]))
+        # The bevel shades. Unset, Fusion derives them from its light default
+        # and draws near-white lines wherever the stylesheet says nothing.
+        p.setColor(group, QPalette.Light, QColor(t["border"]))
+        p.setColor(group, QPalette.Midlight, QColor(t["border"]))
+        p.setColor(group, QPalette.Mid, QColor(t["well"]))
+        p.setColor(group, QPalette.Dark, QColor(t["bg"]))
+        p.setColor(group, QPalette.Shadow, QColor(t["shadow"]))
+    for role in (QPalette.Text, QPalette.ButtonText, QPalette.WindowText):
+        p.setColor(QPalette.Disabled, role, QColor(t["faint"]))
+    return p
 
 
-def _first_installed(candidates, fallback):
-    from PySide6.QtGui import QFontDatabase
-    installed = set(QFontDatabase.families())
-    for family in candidates:
-        if family in installed:
-            return family
-    return QFontDatabase.systemFont(fallback).family()
+# ── applying it ─────────────────────────────────────────────────────────────
+class Theme:
+    """What is applied now, so a new frame only repaints when it is really a
+    different colour — setStyleSheet repolishes every widget there is."""
+
+    def __init__(self):
+        self.app = None
+        self.prefs = None
+        self.seed = DEFAULT_SEED
+        self.applied = None
+        self.t = tokens()
+        self.listeners = []
+
+    def dark(self):
+        mode = (self.prefs or {}).get("appearance", "system")
+        if mode in ("dark", "light"):
+            return mode == "dark"
+        try:
+            return self.app.styleHints().colorScheme() != Qt.ColorScheme.Light
+        except AttributeError:
+            return True
+
+    def apply(self, force=False):
+        if self.app is None:
+            return
+        use_wallpaper = (self.prefs or {}).get("colors", "wallpaper") == "wallpaper"
+        seed = self.seed if use_wallpaper else DEFAULT_SEED
+        key = (round(seed[0] * 36) % 36, round(seed[1] * 5), self.dark())
+        if key == self.applied and not force:
+            return
+        self.applied = key
+        self.t = tokens(seed, dark=key[2])
+        if IS_ANDROID:
+            # On Android Qt paints the status and navigation bars from the
+            # colour scheme it is told the app uses; left to follow the
+            # system, a dark window under a light system got white bars.
+            mode = (self.prefs or {}).get("appearance", "system")
+            try:
+                hints = self.app.styleHints()
+                hints.setColorScheme(Qt.ColorScheme.Unknown if mode == "system"
+                                     else Qt.ColorScheme.Dark if key[2]
+                                     else Qt.ColorScheme.Light)
+            except AttributeError:
+                pass
+        self.app.setPalette(build_palette(self.t))
+        self.app.setStyleSheet(build_qss(self.t, _fonts["sans"], _fonts["mono"]))
+        for listener in list(self.listeners):
+            listener(self.t)
+
+    def set_seed(self, seed):
+        self.seed = seed
+        self.apply()
 
 
-def apply(app):
-    """The stylesheet and palette, with the fonts this machine actually has.
+theme = Theme()
+_fonts = {"sans": SANS, "mono": MONO}
 
-    A stylesheet's font-family list is not a fallback chain in Qt: it takes
-    the first name, and when that is not installed — JetBrains Mono on a
-    stock Windows or Mac — it falls straight back to the default sans. So
-    the families are chosen here, from what is installed, and "monospace"
-    (which the inline styles use, and which only fontconfig knows) is
-    mapped onto the same choice.
-    """
+
+def token(name):
+    return theme.t[name]
+
+
+def _load_fonts():
+    """The bundled families, else whatever is installed."""
     from PySide6.QtGui import QFont, QFontDatabase
-    mono = _first_installed(MONO_CANDIDATES, QFontDatabase.FixedFont)
-    sans = _first_installed(SANS_CANDIDATES, QFontDatabase.GeneralFont)
-    QFont.insertSubstitution("monospace", mono)
-    app.setStyleSheet(QSS.replace(MONO_FONT, f'"{mono}"')
-                         .replace(SANS_FONT, f'"{sans}"'))
-    palette = QPalette()
-    palette.setColor(QPalette.Window, QColor(BG))
-    palette.setColor(QPalette.WindowText, QColor(FG))
-    palette.setColor(QPalette.Base, QColor(BG_STAGE))
-    palette.setColor(QPalette.AlternateBase, QColor(BG_CARD))
-    palette.setColor(QPalette.Text, QColor(FG))
-    palette.setColor(QPalette.Button, QColor(BG_BTN))
-    palette.setColor(QPalette.ButtonText, QColor(FG))
-    palette.setColor(QPalette.ToolTipBase, QColor(BG_CARD))
-    palette.setColor(QPalette.ToolTipText, QColor(FG))
-    palette.setColor(QPalette.Highlight, QColor(ACCENT))
-    palette.setColor(QPalette.HighlightedText, QColor("#14151F"))
-    palette.setColor(QPalette.PlaceholderText, QColor(FG_DISABLED))
-    # The bevel shades. Unset, Fusion derives them from its light default
-    # and draws near-white lines — under the tabs, around frames — wherever
-    # the stylesheet does not say otherwise.
-    palette.setColor(QPalette.Light, QColor(BORDER_HOVER))
-    palette.setColor(QPalette.Midlight, QColor(BORDER))
-    palette.setColor(QPalette.Mid, QColor(BORDER))
-    palette.setColor(QPalette.Dark, QColor(BG_STAGE))
-    palette.setColor(QPalette.Shadow, QColor("#000000"))
-    palette.setColor(QPalette.Disabled, QPalette.Text, QColor(FG_DISABLED))
-    palette.setColor(QPalette.Disabled, QPalette.ButtonText, QColor(FG_DISABLED))
-    app.setPalette(palette)
+    loaded = set()
+    for path in sorted(FONTS_DIR.glob("*.ttf")):
+        font_id = QFontDatabase.addApplicationFont(str(path))
+        if font_id >= 0:
+            loaded.update(QFontDatabase.applicationFontFamilies(font_id))
+    if SANS not in loaded:
+        _fonts["sans"] = QFontDatabase.systemFont(QFontDatabase.GeneralFont).family()
+    if MONO not in loaded:
+        _fonts["mono"] = QFontDatabase.systemFont(QFontDatabase.FixedFont).family()
+    QFont.insertSubstitution("monospace", _fonts["mono"])
+
+
+def apply(app, prefs=None):
+    """Fonts, stylesheet and palette for `app`, from `prefs`' appearance
+    and colours. theme.apply(force=True) again after either changes."""
+    _load_fonts()
+    theme.app = app
+    theme.prefs = prefs
+    theme.applied = None
+    theme.apply()
+    try:
+        app.styleHints().colorSchemeChanged.connect(lambda *_: theme.apply())
+    except AttributeError:
+        pass
+
+
+# ── controls Qt does not have ───────────────────────────────────────────────
+class Switch(QCheckBox):
+    """A toggle switch: a checkbox drawn as a pill with a knob, in the
+    palette's accent when on."""
+
+    def __init__(self, text="", parent=None):
+        super().__init__(text, parent)
+        self.setCursor(Qt.PointingHandCursor)
+
+    def sizeHint(self):
+        return QSize(46, 28)
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
+
+    def hitButton(self, pos):
+        return self.rect().contains(pos)
+
+    def paintEvent(self, _event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        r = QRectF(1, (self.height() - 26) / 2, 44, 26)
+        on = self.isChecked()
+        pal = self.palette()
+        track = QColor(pal.color(QPalette.Highlight) if on else pal.color(QPalette.Mid))
+        if not self.isEnabled():
+            track.setAlpha(110)
+        p.setPen(Qt.NoPen)
+        p.setBrush(track)
+        p.drawRoundedRect(r, 13, 13)
+        p.setBrush(pal.color(QPalette.HighlightedText) if on
+                   else pal.color(QPalette.PlaceholderText))
+        d = 20
+        x = r.right() - d - 3 if on else r.left() + 3
+        p.drawEllipse(QRectF(x, r.top() + 3, d, d))
+        p.end()
+
+
+def touch_scroll(area):
+    """Let a finger drag `area` (a QAbstractScrollArea) on a touch screen.
+
+    QtWidgets scroll by scroll bar and wheel only; a drag on the content
+    selects or does nothing. QScroller turns a press-and-move into kinetic
+    scrolling, which is the only way to scroll on a phone.
+    """
+    if not IS_ANDROID:
+        return
+    from PySide6.QtWidgets import QScroller
+    QScroller.grabGesture(area.viewport(), QScroller.LeftMouseButtonGesture)

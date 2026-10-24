@@ -180,14 +180,34 @@ jobs:
           path: dist/installer/*.dmg
           if-no-files-found: error
 
+  # The Android app, signed with the release key (the ANDROID_KEYSTORE*
+  # secrets): x86_64 is installed and started on the emulator, arm64 — what
+  # phones run — is built from the same sources.
+  android-x86_64:
+    needs: version
+    uses: ./.github/workflows/android.yml
+    with: { mode: release, arch: x86_64 }
+    secrets: inherit
+
+  android-arm64:
+    needs: version
+    uses: ./.github/workflows/android.yml
+    with: { mode: release, arch: aarch64 }
+    secrets: inherit
+
   publish:
     timeout-minutes: 15
     if: github.ref_type == 'tag'
-    needs: [version, linux-install, windows, macos]
+    needs: [version, linux-install, windows, macos, android-x86_64, android-arm64]
     runs-on: ubuntu-latest
     steps:
+      # The installers only: the Android builds also leave a build log and
+      # the emulator's screenshots behind.
       - uses: actions/download-artifact@v4
-        with: { path: assets, merge-multiple: true }
+        with:
+          path: assets
+          merge-multiple: true
+          pattern: "{linux,windows,macos,apk-release-*}"
       - name: Checksums the updater verifies every download against
         working-directory: assets
         run: sha256sum * > SHA256SUMS && cat SHA256SUMS

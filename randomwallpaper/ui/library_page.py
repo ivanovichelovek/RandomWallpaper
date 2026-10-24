@@ -1,4 +1,4 @@
-"""The Downloaded tab: everything you have kept, and what to do with it.
+"""The Saved tab: everything you have kept, and what to do with it.
 
 Two actions: put one up now, and say which season or holiday it belongs to.
 Selection is multiple because pinning a handful at once is the normal way to
@@ -11,22 +11,27 @@ import shutil
 from pathlib import Path
 
 from PySide6.QtCore import (
-    QEvent, QObject, QRunnable, QSize, Qt, QThreadPool, Signal, Slot,
+    QEvent, QObject, QRectF, QRunnable, QSize, Qt, QThreadPool, Signal, Slot,
 )
 from PySide6.QtGui import (
-    QColor, QFont, QFontMetrics, QIcon, QImage, QImageReader, QPainter, QPen,
-    QPixmap,
+    QColor, QFont, QFontMetrics, QIcon, QImage, QImageReader, QPainter,
+    QPainterPath, QPen, QPixmap,
 )
 from PySide6.QtWidgets import (
-    QAbstractItemView, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QMenu,
-    QPushButton, QStackedWidget, QStyledItemDelegate, QVBoxLayout, QWidget,
+    QAbstractItemView, QFrame, QGridLayout, QHBoxLayout, QLabel, QLineEdit,
+    QListWidget, QListWidgetItem, QMenu, QPushButton, QStackedWidget,
+    QStyle, QStyledItemDelegate, QVBoxLayout, QWidget,
 )
 
 from .. import core
-from .style import CATEGORY_COLORS, FG_DIM
-from ..paths import CACHE_DIR
+from . import style
+from .style import CATEGORY_COLORS, touch_scroll
+from .widgets import label
+from ..paths import CACHE_DIR, IS_ANDROID
 
-THUMB_W, THUMB_H = 220, 124
+# Smaller on a phone, so two tiles share its width rather than one sitting
+# beside an empty column.
+THUMB_W, THUMB_H = (160, 90) if IS_ANDROID else (220, 124)
 THUMB_DIR = CACHE_DIR / "thumbs"
 
 
@@ -84,103 +89,66 @@ def make_thumb(path):
 
 
 CATEGORIES_ROLE = Qt.UserRole + 1
-# The stylesheet's item margin + border + padding, on each side.
-ITEM_INSET = 4 + 1 + 6
+TILE_GAP = 6        # around each picture, inside its cell
+RADIUS = 12
 
 
 class _TileDelegate(QStyledItemDelegate):
-    """The tile as Qt draws it — frame, picture, name — plus the categories
-    underneath as coloured tags. A list item's text is one colour, and a
-    category is what these tags are for telling apart at a glance."""
-
-    def initStyleOption(self, option, index):
-        super().initStyleOption(option, index)
-        option.text = ""        # drawn in paint(), at a fixed place
+    """A tile is its picture: rounded, with a dot per category it is pinned
+    to, a ★ when it is in the shuffle set, and a ring in the accent when it
+    is picked. The name is in the tooltip; on a grid of wallpapers the
+    pictures are what tells them apart."""
 
     def paint(self, painter, option, index):
-        super().paint(painter, option, index)
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
+        rect = option.rect.adjusted(TILE_GAP, TILE_GAP, -TILE_GAP, -TILE_GAP)
+        path = QPainterPath()
+        path.addRoundedRect(rect, RADIUS, RADIUS)
 
-        # The name, a fixed gap under the picture. Left to Qt, a one-line
-        # name is centred in all the room below the picture, which is also
-        # where the tags go.
-        name_font = QFont(option.font)
-        name_fm = QFontMetrics(name_font)
-        top = option.rect.top() + ITEM_INSET + THUMB_H + 6
-        name_rect = option.rect.adjusted(ITEM_INSET, 0, -ITEM_INSET, 0)
-        name_rect.setTop(top)
-        name_rect.setHeight(name_fm.height())
-        painter.setFont(name_font)
-        painter.setPen(option.palette.color(option.palette.ColorRole.Text))
-        painter.drawText(name_rect, Qt.AlignHCenter | Qt.AlignVCenter,
-                         name_fm.elidedText(str(index.data(Qt.DisplayRole) or ""),
-                                            Qt.ElideMiddle, name_rect.width()))
+        icon = index.data(Qt.DecorationRole)
+        if isinstance(icon, QIcon) and not icon.isNull():
+            pix = icon.pixmap(rect.size())
+            painter.setClipPath(path)
+            painter.drawPixmap(rect, pix)
+            painter.setClipping(False)
+        else:
+            painter.fillPath(path, QColor(style.token("well")))
+
+        selected = bool(option.state & QStyle.State_Selected)
+        hover = bool(option.state & QStyle.State_MouseOver)
+        if selected:
+            painter.setPen(QPen(QColor(style.token("accent")), 3))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(rect.adjusted(-1, -1, 1, 1), RADIUS + 1, RADIUS + 1)
+        elif hover:
+            painter.setPen(QPen(QColor(style.token("border")), 2))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawRoundedRect(rect, RADIUS, RADIUS)
 
         categories = index.data(CATEGORIES_ROLE) or []
         if core.SHUFFLE in categories:
-            # Outlined and starred, so the shuffle set reads at a glance
-            # across a whole grid — a tag alone is one small word among many.
-            color = QColor(CATEGORY_COLORS[core.SHUFFLE])
-            painter.setPen(QPen(color, 2))
-            painter.setBrush(Qt.NoBrush)
-            painter.drawRoundedRect(option.rect.adjusted(3, 3, -3, -3), 8, 8)
-            star_font = QFont(option.font)
-            star_font.setPixelSize(15)
-            painter.setFont(star_font)
-            badge = option.rect.adjusted(ITEM_INSET, ITEM_INSET, -ITEM_INSET, 0)
-            badge.setHeight(22)
-            badge.setLeft(badge.right() - 22)
+            badge = rect.adjusted(rect.width() - 30, 6, -6, 0)
+            badge.setHeight(24)
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor(0, 0, 0, 150))
-            painter.drawEllipse(badge.adjusted(2, 2, -2, -2))
-            painter.setPen(color)
+            painter.drawEllipse(badge)
+            star = QFont(option.font)
+            star.setPixelSize(14)
+            painter.setFont(star)
+            painter.setPen(QColor(CATEGORY_COLORS[core.SHUFFLE]))
             painter.drawText(badge, Qt.AlignCenter, "★")
-        if not categories:
-            painter.restore()
-            return
-        font = QFont(option.font)
-        # Pixels, not points: the stylesheet may have set the font in either,
-        # and a point size of -1 is what the other one reads as.
-        font.setPixelSize(max(10, round(QFontMetrics(option.font).height() * 0.72)))
-        font.setWeight(QFont.DemiBold)
-        painter.setFont(font)
-        fm = QFontMetrics(font)
-
-        pad_x, gap = 8, 5
-        height = fm.height() + 4
-        area = option.rect.adjusted(ITEM_INSET, 0, -ITEM_INSET, -ITEM_INSET)
-        widths = [fm.horizontalAdvance(core.theme_label(c)) + 2 * pad_x
-                  for c in categories]
-        # As many as fit on the line; the rest become "+N".
-        shown, used = [], 0
-        for i, (category, width) in enumerate(zip(categories, widths)):
-            rest = len(categories) - i - 1
-            more = fm.horizontalAdvance(f"+{rest}") + gap if rest else 0
-            if used + width + more > area.width() and shown:
-                break
-            shown.append((category, width))
-            used += width + gap
-        hidden = len(categories) - len(shown)
-        total = used - gap + (fm.horizontalAdvance(f"+{hidden}") + gap if hidden else 0)
-
-        x = area.left() + max(0, (area.width() - total) // 2)
-        y = name_rect.bottom() + 5
-        for category, width in shown:
-            color = QColor(CATEGORY_COLORS.get(category, FG_DIM))
-            tint = QColor(color)
-            tint.setAlpha(64)
+        dots = [c for c in categories if c != core.SHUFFLE]
+        if dots:
+            x, y = rect.left() + 8, rect.bottom() - 18
+            back = QRectF(x - 4, y - 4, 14 * len(dots) + 4, 18)
             painter.setPen(Qt.NoPen)
-            painter.setBrush(tint)
-            painter.drawRoundedRect(x, y, width, height, height / 2, height / 2)
-            painter.setPen(color)
-            painter.drawText(x, y, width, height, Qt.AlignCenter,
-                             core.theme_label(category))
-            x += width + gap
-        if hidden:
-            painter.setPen(QColor(FG_DIM))
-            painter.drawText(x, y, area.right() - x, height,
-                             Qt.AlignLeft | Qt.AlignVCenter, f"+{hidden}")
+            painter.setBrush(QColor(0, 0, 0, 140))
+            painter.drawRoundedRect(back, 9, 9)
+            for category in dots:
+                painter.setBrush(QColor(CATEGORY_COLORS.get(category, "#999999")))
+                painter.drawEllipse(QRectF(x, y, 10, 10))
+                x += 14
         painter.restore()
 
 
@@ -215,8 +183,36 @@ class LibraryPage(QWidget):
         self.items = {}         # path -> QListWidgetItem, current listing
 
         root = QVBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
-        root.setSpacing(0)
+        if IS_ANDROID:
+            root.setContentsMargins(12, 12, 12, 10)
+        else:
+            root.setContentsMargins(4, 16, 16, 16)
+        root.setSpacing(12)
+
+        # ── heading, search and the ★ filter ─────────────────────────────
+        head = QHBoxLayout()
+        head.setSpacing(10)
+        root.addLayout(head)
+        head.addWidget(label("Saved", "h1"))
+        self.total = label("", "mono")
+        head.addWidget(self.total, 0, Qt.AlignBottom)
+        head.addStretch(1)
+        self.search = QLineEdit()
+        self.search.setObjectName("search")
+        self.search.setPlaceholderText("Search by name")
+        self.search.setClearButtonEnabled(True)
+        self.search.textChanged.connect(self.apply_filter)
+        if IS_ANDROID:
+            root.addWidget(self.search)
+        else:
+            self.search.setMaximumWidth(260)
+            head.addWidget(self.search, 1)
+        self.shuffle_only = QPushButton("★ only")
+        self.shuffle_only.setCheckable(True)
+        self.shuffle_only.setProperty("class", "flat")
+        self.shuffle_only.setToolTip("Show only the wallpapers in the shuffle set")
+        self.shuffle_only.toggled.connect(self.apply_filter)
+        head.addWidget(self.shuffle_only)
 
         self.list = QListWidget()
         self.list.setObjectName("library")
@@ -225,8 +221,8 @@ class LibraryPage(QWidget):
         self.list.setMovement(QListWidget.Static)
         self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.list.setIconSize(QSize(THUMB_W, THUMB_H))
-        self.list.setSpacing(6)
-        self.list.setWordWrap(True)
+        self.list.setSpacing(0)
+        self.list.setMouseTracking(True)
         self.list.setItemDelegate(_TileDelegate(self.list))
         self.list.itemSelectionChanged.connect(self.sync)
         # Space toggling the current tile's pick state, the way it did in the
@@ -235,73 +231,95 @@ class LibraryPage(QWidget):
         # reach LibraryPage.keyPressEvent), and Qt's own binding for Space in
         # an item view does not double as multi-select in IconMode.
         self.list.installEventFilter(self)
+        touch_scroll(self.list)
         root.addWidget(self.list, 1)
 
-        self.empty = QLabel()
-        self.empty.setProperty("class", "placeholder")
-        self.empty.setStyleSheet("color:#4C5170; font-size:13px;")
+        self.empty = label("", "placeholder", wrap=True)
         self.empty.setAlignment(Qt.AlignCenter)
-        self.empty.setWordWrap(True)
         self.empty.setVisible(False)
         root.addWidget(self.empty, 1)
 
+        # ── what to do with the ones picked ──────────────────────────────
         self.footer = QStackedWidget()
         root.addWidget(self.footer)
 
         bottom = QWidget()
-        bottom.setObjectName("bottombar")
-        bl = QHBoxLayout(bottom)
-        bl.setContentsMargins(14, 8, 14, 8)
-        bl.setSpacing(12)
         self.footer.addWidget(bottom)
+        bottom_row = QHBoxLayout(bottom)
+        bottom_row.setContentsMargins(0, 0, 0, 0)
+        pill = QFrame()
+        pill.setObjectName("pill")
+        if IS_ANDROID:
+            # Five controls in one row are twice a phone's width: the count
+            # on top and the four actions two by two below.
+            bottom_row.addWidget(pill, 1)
+            stack = QVBoxLayout(pill)
+            stack.setContentsMargins(12, 10, 12, 10)
+            stack.setSpacing(8)
+            bl = QHBoxLayout()
+            stack.addLayout(bl)
+            actions = QGridLayout()
+            actions.setSpacing(8)
+            stack.addLayout(actions)
+        else:
+            bottom_row.addStretch(1)
+            bottom_row.addWidget(pill)
+            bottom_row.addStretch(1)
+            bl = QHBoxLayout(pill)
+            bl.setContentsMargins(16, 6, 6, 6)
+            bl.setSpacing(4)
+            actions = None
 
-        self.count = QLabel()
-        self.count.setProperty("class", "mono")
-        self.count.setStyleSheet("color:#8B90A8; font-family:monospace; font-size:11px;")
+        def add_action(button, row, column):
+            if actions is None:
+                bl.addWidget(button)
+            else:
+                button.setMinimumHeight(44)
+                actions.addWidget(button, row, column)
+
+        self.count = label("", "strong")
         bl.addWidget(self.count, 1)
-
-        self.shuffle_only = QPushButton("★ only")
-        self.shuffle_only.setCheckable(True)
-        self.shuffle_only.setToolTip("Show only the wallpapers in the shuffle set")
-        self.shuffle_only.toggled.connect(self.apply_filter)
-        bl.addWidget(self.shuffle_only)
+        bl.addSpacing(6)
 
         self.delete_btn = QPushButton("Delete")
-        self.delete_btn.setProperty("class", "danger")
+        self.delete_btn.setProperty("class", "danger flat" if not IS_ANDROID else "danger")
         self.delete_btn.setToolTip("Delete the selected wallpapers from disk (Del)")
         self.delete_btn.clicked.connect(self.delete_selected)
-        bl.addWidget(self.delete_btn)
+        add_action(self.delete_btn, 0, 0)
 
         self.pin_btn = QPushButton("Pin to…")
+        if not IS_ANDROID:
+            self.pin_btn.setProperty("class", "flat")
         self.pin_btn.setToolTip("Use the selected wallpapers for a season or holiday")
         self.pin_menu = QMenu(self.pin_btn)
         self.pin_menu.aboutToShow.connect(self.refresh_pin_menu)
         self.pin_btn.setMenu(self.pin_menu)
-        bl.addWidget(self.pin_btn)
+        add_action(self.pin_btn, 0, 1)
 
         self.shuffle_btn = QPushButton("★ Shuffle")
+        if not IS_ANDROID:
+            self.shuffle_btn.setProperty("class", "flat")
         self.shuffle_btn.clicked.connect(self.toggle_shuffle)
-        bl.addWidget(self.shuffle_btn)
+        add_action(self.shuffle_btn, 1, 0)
 
         self.set_btn = QPushButton("Set as wallpaper")
         self.set_btn.setProperty("class", "accent")
-        self.set_btn.setToolTip("Put this one on the desktop now")
+        self.set_btn.setToolTip("Put this one up now")
         self.set_btn.clicked.connect(self.set_as_wallpaper)
-        bl.addWidget(self.set_btn)
+        add_action(self.set_btn, 1, 1)
         # Each screen its own: the button opens a choice of screen instead.
         self.screen_menu = QMenu(self)
         self.screen_menu.aboutToShow.connect(self.refresh_screen_menu)
+        self.actions = [self.delete_btn, self.pin_btn, self.shuffle_btn, self.set_btn]
 
-        confirm = QWidget()
+        confirm = QFrame()
         confirm.setObjectName("confirm")
         cl = QHBoxLayout(confirm)
-        cl.setContentsMargins(14, 10, 14, 10)
-        cl.setSpacing(12)
+        cl.setContentsMargins(16, 10, 10, 10)
+        cl.setSpacing(10)
         self.footer.addWidget(confirm)
 
-        self.confirm_label = QLabel()
-        self.confirm_label.setObjectName("confirmText")
-        self.confirm_label.setWordWrap(True)
+        self.confirm_label = label("", None, wrap=True)
         cl.addWidget(self.confirm_label, 1)
 
         cancel_btn = QPushButton("Cancel")
@@ -309,11 +327,33 @@ class LibraryPage(QWidget):
         cl.addWidget(cancel_btn)
 
         confirm_btn = QPushButton("Delete")
-        confirm_btn.setProperty("class", "danger")
+        confirm_btn.setProperty("class", "accent")
         confirm_btn.clicked.connect(self.do_delete)
         cl.addWidget(confirm_btn)
 
         self.sync()
+
+    def _fit_tiles(self):
+        """As many columns as fit, each as wide as the room allows — on a
+        phone two tiles fill its width rather than leaving a gap at the
+        right."""
+        # The list's own width less a scroll bar's, whether one shows yet or
+        # not: the grid is laid out before the bar decides to appear.
+        # Qt's icon view wraps a row a little before it is quite full, so
+        # some slack beyond the scroll bar too.
+        room = self.list.width() - self.list.verticalScrollBar().sizeHint().width() - 24
+        if room <= 0:
+            return
+        least = THUMB_W + 2 * TILE_GAP
+        columns = max(2 if IS_ANDROID else 1, room // least)
+        width = room // columns
+        height = round((width - 2 * TILE_GAP) * THUMB_H / THUMB_W) + 2 * TILE_GAP
+        size = QSize(width, height)
+        if self.list.gridSize() != size:
+            self.list.setGridSize(size)
+        for item in self.items.values():
+            if item.sizeHint() != size:
+                item.setSizeHint(size)
 
     # ── what is on disk ─────────────────────────────────────────────────────
     @staticmethod
@@ -361,7 +401,7 @@ class LibraryPage(QWidget):
         self.list.setVisible(bool(self.entries))
         if not self.entries:
             self.empty.setText(
-                f"Nothing kept yet. Press Save on the Random tab and it lands "
+                f"Nothing kept yet. Press Keep on the Random tab and it lands "
                 f"in {core.SAVE_DIR}."
             )
             self.sync()
@@ -371,13 +411,13 @@ class LibraryPage(QWidget):
         # categories — plus the item's padding, border and margin from the
         # stylesheet (6 + 1 + 4 on each side). Short of that, Qt elides the
         # name to make the categories fit, or the other way round.
-        line = self.list.fontMetrics().lineSpacing()
-        tile = QSize(THUMB_W + 24, THUMB_H + 2 * line + 38)
+        tile = QSize(THUMB_W + 2 * TILE_GAP, THUMB_H + 2 * TILE_GAP)
         for path, categories in self.entries:
             # In calendar order, not alphabetical: spring → easter, shuffle.
             ordered = [key for key in core.pin_categories() if key in categories]
             tag = "  ".join(core.theme_label(c) for c in ordered)
             item = QListWidgetItem(path.stem)
+            item.setData(Qt.UserRole + 2, path.stem.lower())
             item.setSizeHint(tile)
             item.setData(Qt.UserRole, str(path))
             item.setData(CATEGORIES_ROLE, ordered)
@@ -390,6 +430,7 @@ class LibraryPage(QWidget):
             else:
                 self.pool.start(_ThumbJob(path, self.thumb_signals))
 
+        self._fit_tiles()
         self.apply_filter()
 
     def _thumb_ready(self, path_str, image):
@@ -411,8 +452,11 @@ class LibraryPage(QWidget):
 
     def apply_filter(self):
         only = self.shuffle_only.isChecked()
+        words = self.search.text().strip().lower().split()
         for item in self.items.values():
-            hide = only and core.SHUFFLE not in (item.data(CATEGORIES_ROLE) or [])
+            name = item.data(Qt.UserRole + 2) or ""
+            hide = ((only and core.SHUFFLE not in (item.data(CATEGORIES_ROLE) or []))
+                    or any(w not in name for w in words))
             item.setHidden(hide)
             if hide:
                 item.setSelected(False)
@@ -436,14 +480,23 @@ class LibraryPage(QWidget):
             "Add the selected wallpapers to the shuffle set — the rotation "
             "draws from it when set to Shuffle my picks")
         in_set = sum(core.SHUFFLE in cats for _, cats in self.entries)
-        self.shuffle_only.setText(f"★ only  {in_set}" if in_set else "★ only")
+        self.shuffle_only.setText(f"★ {in_set}" if in_set else "★ only")
         total = len(self.entries)
+        self.total.setText(str(total) if total else "")
         if chosen:
-            self.count.setText(f"{len(chosen)} of {total} selected")
+            self.count.setText(f"{len(chosen)} picked")
         else:
-            self.count.setText(f"{total} kept  ·  click to pick")
+            self.count.setText(f"{'Tap' if IS_ANDROID else 'Click'} to pick"
+                               if total else "")
+        if not IS_ANDROID:
+            # The bar is a hint until something is picked, then the actions.
+            for button in self.actions:
+                button.setVisible(bool(chosen))
 
     def eventFilter(self, watched, event):
+        if watched is self.list and event.type() == QEvent.Resize:
+            # The list's own new width, which the page's resize precedes.
+            self._fit_tiles()
         if watched is self.list and event.type() == QEvent.KeyPress \
                 and event.key() == Qt.Key_Space and not self.asking():
             item = self.list.currentItem()
@@ -569,7 +622,7 @@ class LibraryPage(QWidget):
         painter = QPainter(pix)
         painter.setRenderHint(QPainter.Antialiasing)
         painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(CATEGORY_COLORS.get(category, FG_DIM)))
+        painter.setBrush(QColor(CATEGORY_COLORS.get(category, "#999999")))
         painter.drawEllipse(1, 1, 10, 10)
         painter.end()
         return QIcon(pix)

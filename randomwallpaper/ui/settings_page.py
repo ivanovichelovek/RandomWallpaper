@@ -6,34 +6,46 @@ switching to another one.
 """
 import os
 import threading
-from datetime import date
+from datetime import date, datetime
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QButtonGroup, QCheckBox, QFormLayout, QFrame, QHBoxLayout, QLabel,
-    QLineEdit, QMessageBox, QPushButton, QRadioButton, QScrollArea, QSpinBox, QVBoxLayout,
-    QWidget,
+    QBoxLayout, QButtonGroup, QCheckBox, QFrame, QGridLayout, QHBoxLayout,
+    QLabel, QLineEdit, QMessageBox, QPushButton, QRadioButton, QScrollArea,
+    QSpinBox, QVBoxLayout, QWidget,
 )
 
 from .. import __version__, core, schedule, update
+from ..paths import IS_ANDROID
+from .style import Switch, theme as look, touch_scroll
+from .widgets import Choice, Segmented, card, label, repolish, row, rule, titled
 
 
-def _eyebrow(text):
-    label = QLabel(text)
-    label.setStyleSheet(
-        "font-family: monospace; font-size:9px; font-weight:700; "
-        "letter-spacing:1.6px; color:#8B90A8;"
-    )
-    return label
+class _Columns(QWidget):
+    """Two columns side by side, or one above the other when there is not
+    room for both — a narrow window, a tile, a phone."""
 
+    def __init__(self, breakpoint=860):
+        super().__init__()
+        self.breakpoint = breakpoint
+        self.box = QBoxLayout(QBoxLayout.LeftToRight, self)
+        self.box.setContentsMargins(0, 0, 0, 0)
+        self.box.setSpacing(16)
+        self.left = QVBoxLayout()
+        self.left.setSpacing(16)
+        self.right = QVBoxLayout()
+        self.right.setSpacing(16)
+        self.box.addLayout(self.left, 5)
+        self.box.addLayout(self.right, 4)
 
-def _card():
-    frame = QFrame()
-    frame.setObjectName("card")
-    layout = QVBoxLayout(frame)
-    layout.setContentsMargins(14, 14, 14, 14)
-    layout.setSpacing(8)
-    return frame, layout
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        wide = event.size().width() >= self.breakpoint
+        direction = QBoxLayout.LeftToRight if wide else QBoxLayout.TopToBottom
+        if self.box.direction() != direction:
+            self.box.setDirection(direction)
+            for column in (self.left, self.right):
+                column.setStretch(column.count() - 1, 1 if wide else 0)
 
 
 class SettingsPage(QWidget):
@@ -52,63 +64,184 @@ class SettingsPage(QWidget):
         # Everything here wraps; sideways scrolling would only ever mean
         # something failed to.
         scroller.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        touch_scroll(scroller)
         outer.addWidget(scroller)
 
         root = QWidget()
         root_layout = QVBoxLayout(root)
-        root_layout.setContentsMargins(18, 18, 18, 18)
+        if IS_ANDROID:
+            root_layout.setContentsMargins(12, 14, 12, 14)
+        else:
+            root_layout.setContentsMargins(4, 16, 16, 16)
         root_layout.setSpacing(14)
         scroller.setWidget(root)
+        root_layout.addWidget(label("Settings", "h1"))
+        columns = _Columns()
+        root_layout.addWidget(columns)
+        self._bad_times = None
 
-        # ── filters card ─────────────────────────────────────────────────
-        card, card_layout = _card()
-        root_layout.addWidget(card)
-        form = QFormLayout()
-        form.setSpacing(10)
-        # The same form everywhere. Left to the platform, macOS right-aligns
-        # the labels, keeps each field at its size hint and centres the lot.
-        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        form.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
-        form.setRowWrapPolicy(QFormLayout.DontWrapRows)
-        card_layout.addLayout(form)
+        # ══ left: changing the wallpaper ════════════════════════════════
+        auto_card, auto = card(spacing=14)
+        columns.left.addWidget(auto_card)
 
-        self.source = self._combo([s[0] for s in core.SOURCES])
+        head, self.auto_about = titled(
+            "Change the wallpaper by itself",
+            "Puts up a new wallpaper on its own, even while this window is "
+            "closed. Off: it only changes when you press Keep or Set.")
+        head.layout().itemAt(0).widget().setProperty("class", "h2")
+        self.auto = Switch()
+        self.auto.setChecked(prefs["auto_enabled"])
+        self._suppress_auto = False
+        self.auto.toggled.connect(self.apply)
+        auto.addWidget(row(head, self.auto))
+
+        # ── where it comes from ──
+        auto.addWidget(label("Where the new wallpaper comes from", "strong"))
+        choices = QHBoxLayout() if not IS_ANDROID else QVBoxLayout()
+        choices.setSpacing(10)
+        auto.addLayout(choices)
+        self.rotation_group = QButtonGroup(self)
+        self.rotation_buttons = {}
+        self.rotation_cards = {}
+        texts = {
+            "calendar": ("The season or holiday",
+                         "Autumn, Halloween, Christmas… as the date comes. Uses "
+                         "the wallpapers pinned there; with none, downloads "
+                         "one that fits."),
+            core.SHUFFLE: ("My shuffle set ★",
+                           "The wallpapers you starred on the Saved tab, "
+                           "whatever the date. Nothing is downloaded."),
+        }
+        for _, key in core.ROTATIONS:
+            title, text = texts[key]
+            choice = Choice(title, text)
+            choice.setChecked(core.rotation(prefs) == key)
+            self.rotation_group.addButton(choice.radio)
+            self.rotation_buttons[key] = choice.radio
+            self.rotation_cards[key] = choice
+            choices.addWidget(choice, 1)
+        self.rotation_group.buttonToggled.connect(self._rotation_toggled)
+        self.calendar_state = label("", "mono", wrap=True)
+        self.rotation_cards["calendar"].extra.addWidget(self.calendar_state)
+        self.shuffle_state = label("", "mono", wrap=True)
+        self.rotation_cards[core.SHUFFLE].extra.addWidget(self.shuffle_state)
+
+        # Easter: only the calendar has an Easter to date.
+        self.rite_row = QWidget()
+        rite = QHBoxLayout(self.rite_row)
+        rite.setContentsMargins(0, 4, 0, 0)
+        rite.setSpacing(10)
+        rite.addWidget(label("Easter dates", "help"))
+        self.easter_group = QButtonGroup(self)
+        self.easter_orthodox = QRadioButton("Orthodox")
+        self.easter_orthodox.setChecked(prefs["easter"] != "western")
+        self.easter_western = QRadioButton("Western")
+        self.easter_western.setChecked(prefs["easter"] == "western")
+        self.easter_group.addButton(self.easter_orthodox)
+        self.easter_group.addButton(self.easter_western)
+        self.easter_western.toggled.connect(lambda *_: self.apply())
+        rite.addWidget(self.easter_orthodox)
+        rite.addWidget(self.easter_western)
+        rite.addStretch(1)
+        self.rotation_cards["calendar"].extra.addWidget(self.rite_row)
+        auto.addWidget(label("Pin wallpapers to a season or holiday, or star "
+                             "them for the shuffle set, on the Saved tab.",
+                             "help", wrap=True))
+
+        # ── how often ──
+        auto.addWidget(label("How often", "strong"))
+        self.change_mode = Segmented(
+            [("Once a day", "midnight"), ("Every few hours", "every"),
+             ("At set times", "times")], strong=True, expand=True)
+        self.change_mode.setCurrentIndex(
+            self._pos(core.CHANGE_MODES, prefs["change_mode"]))
+        auto.addWidget(self.change_mode)
+        often = QHBoxLayout()
+        often.setSpacing(8)
+        auto.addLayout(often)
+        self.every_label = label("Every", "help")
+        often.addWidget(self.every_label)
+        self.every = QSpinBox()
+        self.every.setButtonSymbols(QSpinBox.NoButtons)
+        self.every.setAlignment(Qt.AlignCenter)
+        self.every.setMinimumWidth(64)
+        self.every_unit = self._combo(["minutes", "hours"])
+        minutes = max(core.MIN_CHANGE_EVERY, int(prefs["change_every"]))
+        in_hours = minutes % 60 == 0
+        self.every_unit.setCurrentIndex(1 if in_hours else 0)
+        self._set_every_range()
+        self.every.setValue(minutes // 60 if in_hours else minutes)
+        often.addWidget(self.every)
+        often.addWidget(self.every_unit)
+        self.times = QLineEdit(core.format_times(
+            core.parse_times(prefs["change_times"])
+            if self._times_ok(prefs["change_times"]) else [(0, 0)]))
+        self.times.setPlaceholderText("07:00, 13:30, 19:00")
+        often.addWidget(self.times, 1)
+        often.addStretch(1)
+        self.change_hint = label("", "help", wrap=True)
+        auto.addWidget(self.change_hint)
+
+        self.change_mode.currentIndexChanged.connect(self.apply)
+        self.every.valueChanged.connect(self.apply)
+        self.every_unit.currentIndexChanged.connect(self._every_unit_changed)
+        self.times.editingFinished.connect(self.apply)
+        self._show_change_widgets()
+
+        # ── what happens next ──
+        note = QFrame()
+        note.setProperty("class", "note")
+        note_layout = QHBoxLayout(note)
+        note_layout.setContentsMargins(14, 10, 10, 10)
+        note_layout.setSpacing(10)
+        next_text = QVBoxLayout()
+        next_text.setSpacing(2)
+        self.next_label = label("", "accentText", wrap=True)
+        next_text.addWidget(self.next_label)
+        self.auto_status = label("", "mono", wrap=True)
+        next_text.addWidget(self.auto_status)
+        note_layout.addLayout(next_text, 1)
+        self.change_now = QPushButton("Change now")
+        self.change_now.setProperty("class", "accent")
+        self.change_now.clicked.connect(lambda: self.retick(force=True))
+        note_layout.addWidget(self.change_now, 0, Qt.AlignVCenter)
+        auto.addWidget(note)
+
+        # The rotation only runs while the window is closed if something runs
+        # it: a systemd timer, a LaunchAgent or a scheduled task. Hidden until
+        # a check finds none — that check is a subprocess on Windows, so it
+        # runs off the UI thread.
+        timer_row = QHBoxLayout()
+        auto.addLayout(timer_row)
+        self.timer_status = label(
+            "Nothing is scheduled to run it while this window is closed.",
+            "error", wrap=True)
+        self.timer_button = QPushButton("Schedule it")
+        self.timer_button.clicked.connect(self.install_timer)
+        timer_row.addWidget(self.timer_status, 1)
+        timer_row.addWidget(self.timer_button)
+        self.timer_status.hide()
+        self.timer_button.hide()
+
+        # ══ right: the reel ══════════════════════════════════════════════
+        reel_card, reel = card()
+        columns.right.addWidget(reel_card)
+        reel.addWidget(label("The reel", "h2"))
+        reel.addWidget(label("What new downloads on the Random tab can be. "
+                             "Saved wallpapers are not touched.", "help", wrap=True))
+
+        self.source = Segmented([(name, key) for name, key, _ in core.SOURCES])
         self.source.setCurrentIndex(core.source_index(prefs["source"]))
         self.source.currentIndexChanged.connect(self.apply)
-        form.addRow(_eyebrow("SOURCE"), self.source)
+        reel.addWidget(row(label("Source", "strong"), self.source))
+        self.source_hint = label("", "help", wrap=True)
+        reel.addWidget(self.source_hint)
 
-        self.theme = self._combo([t[1] for t in core.THEMES])
-        self.theme.setCurrentIndex(core.theme_index(prefs["theme"]))
-        self.theme.currentIndexChanged.connect(self.apply)
-        form.addRow(_eyebrow("THEME"), self.theme)
-
-        self.orientation = self._combo([o[0] for o in core.ORIENTATIONS])
-        self.orientation.setCurrentIndex(
-            self._pos(core.ORIENTATIONS, prefs["orientation"]))
-        self.orientation.currentIndexChanged.connect(self.apply)
-        form.addRow(_eyebrow("ORIENTATION"), self.orientation)
-
-        self.minimum = self._combo([m[0] for m in core.MINIMUMS])
-        self.minimum.setCurrentIndex(self._pos(core.MINIMUMS, prefs["minimum"]))
-        self.minimum.currentIndexChanged.connect(self.apply)
-        form.addRow(_eyebrow("MINIMUM SIZE"), self.minimum)
-
-        self.source_hint = QLabel()
-        self.source_hint.setWordWrap(True)
-        self.source_hint.setStyleSheet("color:#E06C6C; font-size:12px;")
-        card_layout.addWidget(self.source_hint)
-
-        self.pool_status = QLabel()
-        self.pool_status.setWordWrap(True)
-        self.pool_status.setStyleSheet("color:#8B90A8; font-family:monospace; font-size:11px;")
-        card_layout.addWidget(self.pool_status)
-
-        # ── wallhaven-only card ──────────────────────────────────────────
-        self.wallhaven_card, wh = _card()
-        root_layout.addWidget(self.wallhaven_card)
-        wh.addWidget(_eyebrow("WALLHAVEN CATEGORIES"))
-
+        # Wallhaven's own filters, shown only while it is the source.
+        self.wallhaven_card = QWidget()
+        wh = QVBoxLayout(self.wallhaven_card)
+        wh.setContentsMargins(0, 0, 0, 0)
+        wh.setSpacing(8)
         cats = QHBoxLayout()
         wh.addLayout(cats)
         self.cat_general = QCheckBox("General")
@@ -121,190 +254,107 @@ class SettingsPage(QWidget):
             c.toggled.connect(self.apply)
             cats.addWidget(c)
         cats.addStretch(1)
-
-        wh.addWidget(_eyebrow("API KEY — NOT NEEDED FOR THESE FILTERS"))
         self.apikey = QLineEdit(prefs["wallhaven_apikey"])
-        self.apikey.setPlaceholderText("wallhaven.cc/settings/account")
+        self.apikey.setPlaceholderText("API key — not needed for these filters")
         self.apikey.setEchoMode(QLineEdit.Password)
         self.apikey.textChanged.connect(self.apply)
         wh.addWidget(self.apikey)
-
         if os.environ.get("WALLHAVEN_API_KEY", "").strip():
             self.apikey.setEnabled(False)
             self.apikey.setPlaceholderText("taken from WALLHAVEN_API_KEY")
+        reel.addWidget(self.wallhaven_card)
 
-        # ── the calendar rotation ────────────────────────────────────────
-        auto_card, auto = _card()
-        root_layout.addWidget(auto_card)
-        auto.addWidget(_eyebrow("ROTATION"))
-        self._bad_times = None
+        self.theme = self._combo([t[1] for t in core.THEMES])
+        self.theme.setCurrentIndex(core.theme_index(prefs["theme"]))
+        self.theme.currentIndexChanged.connect(self.apply)
+        theme_box, _ = titled("Theme", "A season, holiday or mood — or anything.")
+        reel.addWidget(row(theme_box, self.theme))
+        self.pool_status = label("", "mono", wrap=True)
+        reel.addWidget(self.pool_status)
 
-        # Short, with the explanation in a label of its own: QCheckBox has no
-        # word wrap, and one long line set the whole tab's minimum width —
-        # in a narrow tile or a small floating window, the card ran off the
-        # right edge behind a horizontal scroll bar.
-        self.auto = QCheckBox("Change the wallpaper by itself")
-        self.auto.setChecked(prefs["auto_enabled"])
-        self._suppress_auto = False
-        self.auto.toggled.connect(self.apply)
-        auto.addWidget(self.auto)
-        # What it draws from: the calendar, or the ★ set from the
-        # Downloaded tab regardless of the date.
-        drawn = QHBoxLayout()
-        auto.addLayout(drawn)
-        self.rotation_group = QButtonGroup(self)
-        self.rotation_buttons = {}
-        for label, key in core.ROTATIONS:
-            button = QRadioButton(label)
-            button.setChecked(core.rotation(prefs) == key)
-            self.rotation_group.addButton(button)
-            self.rotation_buttons[key] = button
-            drawn.addWidget(button)
-        drawn.addStretch(1)
-        self.rotation_group.buttonToggled.connect(self._rotation_toggled)
+        reel.addWidget(rule())
+        shape_box, _ = titled("Shape & size",
+                              "Pictures smaller than the minimum are skipped.")
+        reel.addWidget(shape_box)
+        shape = QGridLayout()
+        shape.setHorizontalSpacing(10)
+        shape.setVerticalSpacing(4)
+        reel.addLayout(shape)
+        self.orientation = self._combo([o[0] for o in core.ORIENTATIONS])
+        self.orientation.setCurrentIndex(
+            self._pos(core.ORIENTATIONS, prefs["orientation"]))
+        self.orientation.currentIndexChanged.connect(self.apply)
+        self.minimum = self._combo([m[0] for m in core.MINIMUMS])
+        self.minimum.setCurrentIndex(self._pos(core.MINIMUMS, prefs["minimum"]))
+        self.minimum.currentIndexChanged.connect(self.apply)
+        shape.addWidget(label("Orientation", "help"), 0, 0)
+        shape.addWidget(label("Minimum resolution", "help"), 0, 1)
+        shape.addWidget(self.orientation, 1, 0)
+        shape.addWidget(self.minimum, 1, 1)
 
-        self.auto_about = QLabel()
-        self.auto_about.setWordWrap(True)
-        self.auto_about.setStyleSheet("color:#8B90A8; font-size:12px;")
-        auto.addWidget(self.auto_about)
-
-        self.auto_status = QLabel()
-        self.auto_status.setWordWrap(True)
-        self.auto_status.setStyleSheet("color:#8B90A8; font-family:monospace; font-size:11px;")
-        auto.addWidget(self.auto_status)
-
-        # ── how often, inside a period ──
-        # A new season or holiday always changes the wallpaper at once; this
-        # is how often it changes again while the period lasts.
-        often = QHBoxLayout()
-        auto.addLayout(often)
-        often.addWidget(_eyebrow("CHANGE"))
-        self.change_mode = self._combo([m[0] for m in core.CHANGE_MODES])
-        self.change_mode.setCurrentIndex(
-            self._pos(core.CHANGE_MODES, prefs["change_mode"]))
-        often.addWidget(self.change_mode)
-
-        self.every = QSpinBox()
-        self.every_unit = self._combo(["minutes", "hours"])
-        minutes = max(core.MIN_CHANGE_EVERY, int(prefs["change_every"]))
-        in_hours = minutes % 60 == 0
-        self.every_unit.setCurrentIndex(1 if in_hours else 0)
-        self._set_every_range()
-        self.every.setValue(minutes // 60 if in_hours else minutes)
-        often.addWidget(self.every)
-        often.addWidget(self.every_unit)
-
-        self.times = QLineEdit(core.format_times(
-            core.parse_times(prefs["change_times"])
-            if self._times_ok(prefs["change_times"]) else [(0, 0)]))
-        self.times.setPlaceholderText("07:00, 13:30, 19:00")
-        often.addWidget(self.times, 1)
-        often.addStretch(1)
-
-        self.change_hint = QLabel()
-        self.change_hint.setWordWrap(True)
-        self.change_hint.setStyleSheet("color:#8B90A8; font-size:11px;")
-        auto.addWidget(self.change_hint)
-
-        self.change_mode.currentIndexChanged.connect(self.apply)
-        self.every.valueChanged.connect(self.apply)
-        self.every_unit.currentIndexChanged.connect(self._every_unit_changed)
-        self.times.editingFinished.connect(self.apply)
-        self._show_change_widgets()
-
-        # The rotation only runs while the window is closed if something runs
-        # it: a systemd timer, a LaunchAgent or a scheduled task. Hidden until
-        # a check finds none — that check is a subprocess on Windows, so it
-        # runs off the UI thread.
-        timer_row = QHBoxLayout()
-        auto.addLayout(timer_row)
-        self.timer_status = QLabel(
-            "Nothing is scheduled to run it while this window is closed."
-        )
-        self.timer_status.setWordWrap(True)
-        self.timer_status.setStyleSheet("color:#E0A458; font-size:11px;")
-        self.timer_button = QPushButton("Schedule it")
-        self.timer_button.clicked.connect(self.install_timer)
-        timer_row.addWidget(self.timer_status, 1)
-        timer_row.addWidget(self.timer_button)
-        self.timer_status.hide()
-        self.timer_button.hide()
-
-        self.rite_row = QWidget()
-        rite = QHBoxLayout(self.rite_row)
-        rite.setContentsMargins(0, 0, 0, 0)
-        auto.addWidget(self.rite_row)
-        rite.addWidget(_eyebrow("EASTER"))
-        self.easter_group = QButtonGroup(self)
-        self.easter_orthodox = QRadioButton("Orthodox")
-        self.easter_orthodox.setChecked(prefs["easter"] != "western")
-        self.easter_western = QRadioButton("Western")
-        self.easter_western.setChecked(prefs["easter"] == "western")
-        self.easter_group.addButton(self.easter_orthodox)
-        self.easter_group.addButton(self.easter_western)
-        self.easter_western.toggled.connect(lambda *_: self.apply())
-        rite.addWidget(self.easter_orthodox)
-        rite.addWidget(self.easter_western)
-        rite.addStretch(1)
-
-        # ── several monitors ─────────────────────────────────────────────
-        screens_card, screens = _card()
-        root_layout.addWidget(screens_card)
-        screens.addWidget(_eyebrow("SCREENS"))
+        # ══ right: screens ═══════════════════════════════════════════════
+        screens_card, screens = card(spacing=10)
+        columns.right.addWidget(screens_card)
+        screens_card.setVisible(not IS_ANDROID)     # one screen, always
+        screens.addWidget(label("Screens", "h2"))
+        self.screens_count = label("", "help", wrap=True)
+        screens.addWidget(self.screens_count)
         modes = QHBoxLayout()
+        modes.setSpacing(8)
         screens.addLayout(modes)
         self.screens_group = QButtonGroup(self)
         self.screens_buttons = {}
-        for label, key in core.SCREEN_MODES:
-            button = QRadioButton(label)
-            button.setChecked(core.screens_mode(prefs) == key)
-            self.screens_group.addButton(button)
-            self.screens_buttons[key] = button
-            modes.addWidget(button)
-        modes.addStretch(1)
+        screen_texts = {"sync": "One wallpaper everywhere",
+                        "separate": "A different one per screen"}
+        for title, key in core.SCREEN_MODES:
+            choice = Choice(title, screen_texts.get(key, ""))
+            choice.setChecked(core.screens_mode(prefs) == key)
+            self.screens_group.addButton(choice.radio)
+            self.screens_buttons[key] = choice.radio
+            modes.addWidget(choice, 1)
         self.screens_group.buttonToggled.connect(self._screens_toggled)
 
-        self.main_row = QWidget()
-        main = QHBoxLayout(self.main_row)
-        main.setContentsMargins(0, 0, 0, 0)
-        main.addWidget(_eyebrow("MAIN SCREEN"))
         self.main_output = self._combo([])
         self.main_output.currentIndexChanged.connect(self.apply)
-        main.addWidget(self.main_output, 1)
+        main_box, _ = titled("Main screen",
+                             "A screen plugged in later copies its wallpaper.")
+        self.main_row = row(main_box, self.main_output)
         screens.addWidget(self.main_row)
         self.fill_outputs()
-
-        self.screens_about = QLabel()
-        self.screens_about.setWordWrap(True)
-        self.screens_about.setStyleSheet("color:#8B90A8; font-size:12px;")
+        self.screens_about = label("", "help", wrap=True)
         screens.addWidget(self.screens_about)
         if not core.can_set_per_output():
             # Nothing here can tell one monitor's wallpaper from another's.
             for w in (*self.screens_buttons.values(), self.main_output):
                 w.setEnabled(False)
 
-        # ── the app itself ───────────────────────────────────────────────
-        app_card, app = _card()
-        root_layout.addWidget(app_card)
-        app.addWidget(_eyebrow("APP"))
-        row = QHBoxLayout()
-        app.addLayout(row)
-        self.version_label = QLabel(
-            f"Random Wallpaper {__version__}  ·  {update.describe_install()}")
-        self.version_label.setWordWrap(True)
-        row.addWidget(self.version_label, 1)
+        # ══ right: look & app ════════════════════════════════════════════
+        app_card, app = card(spacing=10)
+        columns.right.addWidget(app_card)
+        app.addWidget(label("Look & app", "h2"))
+        self.colors = Segmented([("From wallpaper", "wallpaper"), ("Fixed", "fixed")])
+        self.colors.set_value(prefs.get("colors", "wallpaper"))
+        self.colors.changed.connect(self._look_changed)
+        colors_box, _ = titled("Colours", "From the wallpaper on screen, or one that stays.")
+        app.addWidget(row(colors_box, self.colors))
+        self.appearance = Segmented([("System", "system"), ("Dark", "dark"), ("Light", "light")])
+        self.appearance.set_value(prefs.get("appearance", "system"))
+        self.appearance.changed.connect(self._look_changed)
+        app.addWidget(row(label("Appearance", "strong"), self.appearance))
+        app.addWidget(rule())
+        self.version_label = label(
+            f"Random Wallpaper {__version__}  ·  {update.describe_install()}",
+            "strong", wrap=True)
         self.update_button = QPushButton("Check for updates")
         self.update_button.clicked.connect(self.update_clicked)
-        row.addWidget(self.update_button)
-        self.update_status = QLabel()
-        self.update_status.setWordWrap(True)
-        self.update_status.setStyleSheet("color:#8B90A8; font-size:11px;")
+        app.addWidget(row(self.version_label, self.update_button))
+        self.update_status = label("", "help", wrap=True)
         self.update_status.hide()
         app.addWidget(self.update_status)
-        self.check_updates = QCheckBox("Check for updates at startup")
+        self.check_updates = Switch()
         self.check_updates.setChecked(prefs["check_updates"])
         self.check_updates.toggled.connect(self.apply)
-        app.addWidget(self.check_updates)
+        app.addWidget(row(label("Look for updates when the app opens"), self.check_updates))
         self._release = None
         if update.install_kind() == "source":
             # Nothing here can replace a git checkout or a uv/pip install;
@@ -313,6 +363,8 @@ class SettingsPage(QWidget):
                 "Installed from source — update with git pull or "
                 "uv tool upgrade randomwallpaper")
 
+        for column in (columns.left, columns.right):
+            column.addStretch(1)
         root_layout.addStretch(1)
         self.refresh_hint()
         self.check_timer()
@@ -423,6 +475,7 @@ class SettingsPage(QWidget):
         mode = core.CHANGE_MODES[self.change_mode.currentIndex()][1]
         self.every.setVisible(mode == "every")
         self.every_unit.setVisible(mode == "every")
+        self.every_label.setVisible(mode == "every")
         self.times.setVisible(mode == "times")
 
     @staticmethod
@@ -464,11 +517,11 @@ class SettingsPage(QWidget):
         if shuffling:
             picks = len(core.pool_images(core.SHUFFLE))
             self.auto_about.setText(
-                f"A random one of the wallpapers marked ★ on the Downloaded "
+                f"A random one of the wallpapers marked ★ on the Saved "
                 f"tab, {how}, whatever the date.")
             if not picks:
                 status = ("nothing marked ★ yet — select some on the "
-                          "Downloaded tab and press ★ Shuffle")
+                          "Saved tab and press ★ Shuffle")
             elif not self.prefs["auto_enabled"]:
                 status = f"off — {picks} marked ★"
             elif state.get("period") == core.SHUFFLE:
@@ -519,9 +572,9 @@ class SettingsPage(QWidget):
             self.change_hint.setText(
                 f"{self._bad_times} — use 24-hour times separated by commas, "
                 f"like 07:00, 19:30. Still changing {how}.")
-            self.change_hint.setStyleSheet("color:#E06C6C; font-size:11px;")
-        else:
-            self.change_hint.setStyleSheet("color:#8B90A8; font-size:11px;")
+        self.change_hint.setProperty("class", "error" if self._bad_times else "help")
+        repolish(self.change_hint)
+        self._refresh_next(shuffling, state)
 
         chosen = len(core.pool_images(theme))
         if theme == "all":
@@ -541,9 +594,53 @@ class SettingsPage(QWidget):
         else:
             self.pool_status.setText(
                 f"Nothing chosen for {core.theme_label(theme)} yet, so its turn "
-                f"downloads one. Pin some on the Downloaded tab, or put files "
+                f"downloads one. Pin some on the Saved tab, or put files "
                 f"in {core.theme_pool(theme)}"
             )
+
+    def _refresh_next(self, shuffling, state):
+        """The cards' state lines and the note under How often: when the
+        wallpaper changes next, and to what."""
+        today = date.today()
+        theme_now, _period = core.current_period(today, self.prefs["easter"])
+        pinned = len(core.pool_images(theme_now))
+        self.calendar_state.setText(
+            f"Now: {core.theme_label(theme_now)} · "
+            + (f"{pinned} pinned" if pinned else "nothing pinned — downloads"))
+        picks = len(core.pool_images(core.SHUFFLE))
+        self.shuffle_state.setText(f"{picks} starred" if picks else "nothing starred yet")
+
+        if not self.prefs["auto_enabled"]:
+            self.next_label.setText("Off — the wallpaper stays as it is")
+            self.change_now.setEnabled(False)
+            return
+        self.change_now.setEnabled(True)
+        when = core.next_change(self.prefs, datetime.now())
+        day = ("today" if when.date() == today else
+               "tomorrow" if (when.date() - today).days == 1 else
+               when.strftime("%a %d %b"))
+        at = f"{day} at {when:%H:%M}"
+        if shuffling:
+            what = (f"one of your {picks} starred wallpapers" if picks
+                    else "nothing yet — star some on the Saved tab")
+        else:
+            what = (f"one of your {pinned} {core.theme_label(theme_now)} wallpapers"
+                    if pinned else f"a fresh {core.theme_label(theme_now)} download")
+        self.next_label.setText(f"Next change {at} — {what}")
+
+        names = list(core.wallpapers_on_outputs()) if not IS_ANDROID else []
+        if len(names) > 1:
+            self.screens_count.setText(f"{len(names)} connected: {', '.join(names)}.")
+        elif names:
+            self.screens_count.setText(f"1 connected: {names[0]}.")
+        else:
+            self.screens_count.setText("")
+
+    def _look_changed(self, _key=None):
+        self.prefs["colors"] = self.colors.value()
+        self.prefs["appearance"] = self.appearance.value()
+        core.save_prefs(self.prefs)
+        look.apply(force=True)
 
     def sync_auto(self):
         """Pull the checkbox back in line when something else switched the
@@ -587,6 +684,8 @@ class SettingsPage(QWidget):
             "screens": self._screens(),
             "primary_output": self.main_output.currentData() or "",
             "check_updates": self.check_updates.isChecked(),
+            "colors": self.colors.value(),
+            "appearance": self.appearance.value(),
         })
         core.save_prefs(self.prefs)
         self._show_change_widgets()
@@ -760,7 +859,7 @@ class SettingsPage(QWidget):
         box.setDefaultButton(install)
         box.exec()
         if box.clickedButton() is install:
-            self.win.show_tab(self.win.tabs.indexOf(self))
+            self.win.show_tab(2)
             self.install_update()
 
     def install_update(self):
@@ -786,7 +885,12 @@ class SettingsPage(QWidget):
 
             def done():
                 self._say_update(message)
-                if ok:
+                if ok and IS_ANDROID:
+                    # Android's installer asks the user, and answers this
+                    # app: it has to still be running to show that screen.
+                    # Installing replaces it when the user confirms.
+                    self.update_button.setEnabled(True)
+                elif ok:
                     # The new version starts once this one is gone: the
                     # installer, or the helper apply() left, waits for it.
                     win.close()

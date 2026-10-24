@@ -14,7 +14,7 @@ second is where the title bar and the desktop show, and it can come out
 blank where the OS withholds screen capture.
 
 A few real frames are downloaded and one is pinned, so the reel and the
-Downloaded tab show content rather than their empty states. $HOME and the
+Saved tab show content rather than their empty states. $HOME and the
 XDG dirs point at a scratch directory; on Windows and macOS the app's own
 config lives under the runner's profile, which is thrown away anyway.
 """
@@ -73,9 +73,9 @@ def seed_library():
 def main():
     seed_library()
     app = QApplication(sys.argv[:1])
-    style.apply(app)
     prefs = core.load_prefs()
     prefs["theme"] = "autumn"
+    style.apply(app, prefs)
     win = Reel(app, prefs)
     win.move(40, 40)
     win.show()

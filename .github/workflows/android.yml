@@ -1,0 +1,154 @@
+name: android
+
+# The Android app: built with pyside6-android-deploy, installed on an
+# emulator and started.
+#
+# A debug build (a push, or by hand) is walked through every tab — the tour
+# is in packaging/android/main.py — and its screenshots and logcat are the
+# run's artifacts: gh run download <id>. release.yml calls this for the
+# signed release builds: an x86_64 one is installed, started and checked on
+# the emulator, an arm64 one (for phones) only built.
+on:
+  push:
+    branches: [android]
+    paths-ignore: ["README.md"]
+  workflow_dispatch:
+    inputs:
+      mode: { type: choice, options: [debug, release], default: debug }
+      arch: { type: choice, options: [x86_64, aarch64], default: x86_64 }
+  workflow_call:
+    inputs:
+      mode: { type: string, default: debug }
+      arch: { type: string, default: x86_64 }
+
+env:
+  PYSIDE_VERSION: "6.12.0"
+  NDK_VERSION: "28.2.13676358"
+  ARCH: ${{ inputs.arch || 'x86_64' }}
+  RW_BUILD_MODE: ${{ inputs.mode || 'debug' }}
+  PACKAGE: dev.ivanc.randomwallpaper
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "17" }
+
+      - name: What python-for-android builds its recipes with
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q autoconf automake libtool libltdl-dev pkg-config \
+            zlib1g-dev libncurses-dev libffi-dev libssl-dev unzip zip >/dev/null
+      - name: SDK packages the deploy tool wants
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;$NDK_VERSION" >/dev/null
+          # buildozer still looks for the SDK tools where they used to be.
+          mkdir -p "$ANDROID_HOME/tools/bin"
+          ln -sf "$ANDROID_HOME"/cmdline-tools/latest/bin/* "$ANDROID_HOME/tools/bin/"
+          echo "ANDROID_SDK=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - name: Host tools, outside the project
+        run: |
+          python -m venv ~/deploy-venv
+          # The deploy tool's own requirements-android.txt, which pip does not install.
+          ~/deploy-venv/bin/pip install -q "PySide6==$PYSIDE_VERSION" buildozer cython \
+            jinja2 pkginfo tqdm "packaging==24.1"
+          echo "PYTHON=$HOME/deploy-venv/bin/python" >> "$GITHUB_ENV"
+          # buildozer looks for cython on PATH, and pip-installs with --user
+          # unless it sees a virtualenv.
+          echo "VIRTUAL_ENV=$HOME/deploy-venv" >> "$GITHUB_ENV"
+          echo "$HOME/deploy-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Android wheels
+        run: |
+          mkdir -p ~/wheels && cd ~/wheels
+          base=https://download.qt.io/official_releases/QtForPython
+          for pkg in pyside6 shiboken6; do
+            name=$(curl -sf "$base/$pkg/" | grep -o "href=\"[^\"]*$PYSIDE_VERSION-[^\"]*android_$ARCH\.whl\"" | head -n1 | cut -d'"' -f2)
+            echo "$pkg: $name"
+            curl -sfL -o "$name" "$base/$pkg/$name"
+          done
+          ls -l
+          echo "WHEELS=$HOME/wheels" >> "$GITHUB_ENV"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: buildozer-${{ env.PYSIDE_VERSION }}-${{ env.ARCH }}
+
+      - name: Icons
+        run: |
+          sudo apt-get install -y -q libegl1 libgl1 libxkbcommon0 >/dev/null
+          ~/deploy-venv/bin/pip install -q platformdirs
+          QT_QPA_PLATFORM=offscreen "$PYTHON" packaging/make_icons.py
+
+      - name: The release key
+        if: env.RW_BUILD_MODE == 'release'
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+        run: |
+          [ -n "$ANDROID_KEYSTORE" ] || { echo "::error::no ANDROID_KEYSTORE secret"; exit 1; }
+          echo "$ANDROID_KEYSTORE" | base64 -d > "$RUNNER_TEMP/release.keystore"
+          echo "KEYSTORE=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+
+      - name: Build
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: packaging/android/build-apk.sh 2>&1 | tee build.log; test "${PIPESTATUS[0]}" -eq 0
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-log-${{ env.RW_BUILD_MODE }}-${{ env.ARCH }}
+          path: build.log
+      - uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ env.RW_BUILD_MODE }}-${{ env.ARCH }}
+          path: dist/android/*.apk
+          if-no-files-found: error
+
+  screenshots:
+    needs: apk
+    # The emulator is x86_64: an arm64 build is only built.
+    if: (inputs.arch || 'x86_64') == 'x86_64'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: apk-${{ inputs.mode || 'debug' }}-x86_64
+          path: apk
+      - name: KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          # A release build is not debuggable, so it cannot be toured: it is
+          # installed, started and watched instead.
+          script: >-
+            if [ "${{ inputs.mode || 'debug' }}" = release ];
+            then packaging/android/check.sh apk/*.apk shots;
+            else packaging/android/tour.sh apk/*.apk shots; fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-screenshots-${{ inputs.mode || 'debug' }}
+          path: shots/

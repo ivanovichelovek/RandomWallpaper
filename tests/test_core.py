@@ -553,7 +553,7 @@ check("the tick added nothing to SAVE_DIR",
       [p.name for p in rw.SAVE_DIR.iterdir() if p.is_file()] == [unrelated.name])
 
 # ── the library listing ─────────────────────────────────────────────────────
-# What the Downloaded tab shows. scan() is a staticmethod precisely so this
+# What the Saved tab shows. scan() is a staticmethod precisely so this
 # can be checked without a window.
 scan = LibraryPage.scan
 
@@ -755,7 +755,7 @@ for i in range(3, 16):
 check("every pinned wallpaper comes up over the period", seen == set(pinned))
 check("and never the same one two nights running", repeats == 0)
 
-# Deleting the wallpaper that is currently up — from the Downloaded tab, or
+# Deleting the wallpaper that is currently up — from the Saved tab, or
 # with a file manager — is tidying up, not choosing a different wallpaper. The
 # rotation must draw again rather than switch itself off.
 live = Path(rw.load_state()["path"])
@@ -988,6 +988,23 @@ check("unreadable times fall back to midnight",
       rw.current_slot(dict(times, change_times=["nope"]), dt(2026, 9, 23, 12, 0))
       == "2026-09-23")
 
+# next_change(): where the slot current_slot() is in ends — what Settings
+# says under "Next change".
+check("midnight changes next at midnight",
+      rw.next_change(mid, dt(2026, 9, 23, 15, 4)) == dt(2026, 9, 24, 0, 0))
+check("an interval changes at the next block",
+      rw.next_change(every, dt(2026, 9, 23, 15, 4)) == dt(2026, 9, 23, 16, 30))
+check("an interval's last block ends at midnight, not past it",
+      rw.next_change(dict(every, change_every=420), dt(2026, 9, 23, 22, 0))
+      == dt(2026, 9, 24, 0, 0))
+check("set times: the next one today, else the first tomorrow",
+      rw.next_change(times, dt(2026, 9, 23, 12, 0)) == dt(2026, 9, 23, 19, 30)
+      and rw.next_change(times, dt(2026, 9, 23, 20, 0)) == dt(2026, 9, 24, 7, 0))
+check("next_change agrees with current_slot: the slot turns over then",
+      all(rw.current_slot(p, rw.next_change(p, n)) != rw.current_slot(p, n)
+          for p in (mid, every, times)
+          for n in (dt(2026, 9, 23, 6, 59), dt(2026, 9, 23, 15, 4), dt(2026, 9, 23, 23, 50))))
+
 # The rotation through the day. download() is stubbed: each call is a new
 # file, so "a fresh wallpaper each change" is countable offline.
 real_download = rw.download
@@ -1102,6 +1119,8 @@ names = {
     ("linux", "x86_64", "rpm"): "random-wallpaper-1.2.3-1.x86_64.rpm",
     ("windows", "AMD64", None): "RandomWallpaper-1.2.3-windows-x64-setup.exe",
     ("macos", "arm64", None): "RandomWallpaper-1.2.3-macos-arm64.dmg",
+    ("android", "aarch64", None): "RandomWallpaper-1.2.3-android-arm64.apk",
+    ("android", "x86_64", None): "RandomWallpaper-1.2.3-android-x86_64.apk",
 }
 check("release asset names are pinned",
       all(update.asset_name("1.2.3", kind=k, machine=m, fmt=f) == want

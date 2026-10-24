@@ -60,16 +60,17 @@ def main():
     from randomwallpaper.ui.window import Reel
 
     app = QApplication.instance() or QApplication([])
-    style.apply(app)
     prefs = core.load_prefs()
+    style.apply(app, prefs)
 
     win = Reel(app, prefs)
     check("window constructs", win is not None)
 
-    tabs = [win.tabs.tabText(i) for i in range(win.tabs.count())]
-    check("three tabs present", tabs == ["Random", "Downloaded", "Settings"])
+    from randomwallpaper.ui.window import SECTIONS
+    check("three sections present", SECTIONS == ["Random", "Saved", "Settings"]
+          and win.pages.count() == 3)
 
-    for i in range(win.tabs.count()):
+    for i in range(win.pages.count()):
         win.show_tab(i)
         app.processEvents()
     check("every tab can be shown without raising", True)

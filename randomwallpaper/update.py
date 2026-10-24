@@ -10,6 +10,8 @@ its platform uses for everything else:
             shown instead;
   windows   the new installer is run silently over the old install, which
             closes the app, replaces it and starts it again;
+  android   the new .apk goes to Android's own installer, which asks the
+            user to confirm, as it does for every sideloaded update;
   macos     the new .dmg is mounted and its app copied over this one,
             wherever it lives — with the administrator's password, asked
             for by macOS, when that folder is not this user's to write —
@@ -94,7 +96,10 @@ def linux_package_format(exe=None):
 
 
 def install_kind():
-    """"linux", "windows", "macos" or "source"."""
+    """"linux", "windows", "macos", "android" or "source"."""
+    from .paths import IS_ANDROID
+    if IS_ANDROID:
+        return "android"
     if not getattr(sys, "frozen", False):
         return "source"
     if sys.platform.startswith("linux"):
@@ -130,6 +135,7 @@ def describe_install():
         "linux": "Linux package",
         "windows": "Windows app",
         "macos": "macOS app",
+        "android": "Android app",
         "source": ("standalone build" if getattr(sys, "frozen", False)
                    else "run from source"),
     }[kind]
@@ -158,6 +164,9 @@ def asset_name(version, kind=None, machine=None, fmt=None):
     if kind == "macos":
         arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
         return f"RandomWallpaper-{version}-macos-{arch}.dmg"
+    if kind == "android":
+        arch = "arm64" if machine in ("arm64", "aarch64") else "x86_64"
+        return f"RandomWallpaper-{version}-android-{arch}.apk"
     return None
 
 
@@ -300,6 +309,8 @@ def apply(release, progress=None):
     if kind == "linux" and name is None:
         raise UpdateError("no package manager claims this install — update it "
                           "the way it was installed")
+    if kind == "android":
+        return _apply_android(release, name, progress)
     if kind == "source":
         raise UpdateError("this copy runs from source — update it the way it "
                           "was installed (git pull, or uv tool upgrade "
@@ -395,6 +406,22 @@ def _replace_bundle(source, bundle):
             raise UpdateError("the password prompt was dismissed — nothing "
                               "changed")
         raise UpdateError(f"could not replace the app: {detail}")
+
+
+# ── Android, through its installer ──────────────────────────────────────────
+def _apply_android(release, name, progress):
+    from .desktop import android
+    from .paths import CACHE_DIR
+    directory = CACHE_DIR / "updates"
+    directory.mkdir(parents=True, exist_ok=True)
+    package = directory / name
+    os.replace(download(release, name, directory, progress), package)
+    try:
+        android.install_apk(package)
+    except OSError as exc:
+        raise UpdateError(f"could not start the installer: {exc}") from exc
+    return (f"{release['version']} downloaded — confirm the update on the "
+            f"screen Android shows")
 
 
 # ── Linux, through the package manager ──────────────────────────────────────

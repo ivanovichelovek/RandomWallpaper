@@ -62,4 +62,4 @@ random-wallpaper-gui = "randomwallpaper.cli:main"
 include = ["randomwallpaper*"]
 
 [tool.setuptools.package-data]
-randomwallpaper = ["resources/*"]
+randomwallpaper = ["resources/*", "resources/fonts/*"]
