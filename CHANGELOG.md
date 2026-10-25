@@ -3,6 +3,22 @@
 Each release's section is published as its GitHub release text, and is what
 the app shows when it offers that update.
 
+## 1.5.1
+
+- Android: each background change crashed on its way out, even after it
+  had set the wallpaper, so the system counted every run as failed. Runs
+  now finish cleanly.
+- Android: a force stop, or the phone's own cleaning, drops the schedule
+  for changing the wallpaper with the app closed. Opening the app now puts
+  it back.
+- Android on Xiaomi (MIUI, HyperOS): turning on "Change the wallpaper by
+  itself" asks you to allow Autostart, which Xiaomi requires before an app
+  can do anything while closed. Settings reminds you while it is off, with a
+  button that opens the switch.
+- Android: starring a wallpaper on the Saved tab no longer leaves a copy
+  without the star beside it. Copies an earlier version made are merged
+  back into one wallpaper when the Saved tab opens.
+
 ## 1.5.0
 
 - Two new sources, both of anime art with millions of pictures:

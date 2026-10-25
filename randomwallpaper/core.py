@@ -991,6 +991,73 @@ def unique_path(directory, stem, ext):
     return candidate
 
 
+def link_into(src, dest):
+    """Give `src` a second name, `dest`: a hardlink, else a relative symlink,
+    else — only where neither can be made — a copy.
+
+    Android allows an app no hardlinks at all, even inside its own files;
+    a copy there made a starred wallpaper show twice on the Saved tab, once
+    with its star and once without. A symlink is the same picture to
+    everything that reads it — stat, samefile, opening it.
+    """
+    try:
+        os.link(src, dest)
+        return
+    except OSError:
+        pass
+    try:
+        os.symlink(os.path.relpath(src, dest.parent), dest)
+        return
+    except OSError:
+        pass
+    shutil.copy2(src, dest)
+
+
+def dedupe_pools():
+    """Turn the copies an earlier pin left in the category directories back
+    into links to the same picture in SAVE_DIR. The number replaced.
+
+    Only byte-for-byte copies of a file kept in SAVE_DIR itself; a file that
+    was dropped into a category directory and is nowhere else stays as it is.
+    """
+    import filecmp
+    try:
+        kept = [p for p in SAVE_DIR.iterdir()
+                if p.is_file() and not p.is_symlink()]
+    except OSError:
+        return 0
+    by_size = {}
+    for path in kept:
+        try:
+            by_size.setdefault(path.stat().st_size, []).append(path)
+        except OSError:
+            pass
+    replaced = 0
+    for key in pin_categories():
+        for pinned in pool_images(key):
+            try:
+                if pinned.is_symlink() or pinned.stat().st_nlink > 1:
+                    continue
+                size = pinned.stat().st_size
+                original = next((p for p in by_size.get(size, [])
+                                 if filecmp.cmp(p, pinned, shallow=False)), None)
+                if original is None:
+                    continue
+                # Made beside it and renamed over it: the picture is never
+                # missing from the category, not even for a moment.
+                spare = pinned.with_name(f".{pinned.name}.link")
+                spare.unlink(missing_ok=True)
+                link_into(original, spare)
+                if not spare.is_symlink() and spare.stat().st_nlink == 1:
+                    spare.unlink()      # only a copy again: nothing gained
+                    continue
+                os.replace(spare, pinned)
+                replaced += 1
+            except OSError:
+                continue
+    return replaced
+
+
 def trash(path):
     return desktop.trash(path)
 

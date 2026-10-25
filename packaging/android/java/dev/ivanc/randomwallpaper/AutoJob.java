@@ -21,6 +21,12 @@ import org.kivy.android.PythonService;
  * declared in the manifest by build-apk.sh — and runs auto.py, which is
  * `random-wallpaper --auto --quiet`. The process ends with the run: Python
  * cannot be started twice in one process, and nothing is left behind.
+ *
+ * auto.py ends the job itself, through done(): python-for-android's
+ * nativeStart() never comes back from a script. It finalizes Python and
+ * calls exit() on this thread, and exit() with the Java VM still running
+ * crashed the process — before jobFinished(), so to the system every run,
+ * even one that had set the wallpaper, was a job that died half-way.
  */
 public class AutoJob extends JobService {
 
@@ -45,6 +51,37 @@ public class AutoJob extends JobService {
         return context.getSystemService(JobScheduler.class).getPendingJob(ID) != null;
     }
 
+    /** The job running in this process, for done(). */
+    private static AutoJob running;
+    private static JobParameters runningParams;
+
+    /**
+     * The run is over: tell the system, then end this process. Called by
+     * auto.py through libjnienv.so (rw_auto_done), or below if Python could
+     * not start at all. Never returns.
+     */
+    public static void done() {
+        AutoJob job;
+        JobParameters params;
+        synchronized (AutoJob.class) {
+            job = running;
+            params = runningParams;
+            running = null;
+            runningParams = null;
+        }
+        if (job != null)
+            job.jobFinished(params, false);
+        // Python is done with this process; the next run gets a new one.
+        // A moment first: jobFinished() reaches the system asynchronously,
+        // and a process gone before it does reads as a job cut short —
+        // run again at once, and again.
+        try {
+            Thread.sleep(2000);
+        } catch (InterruptedException ignored) {
+        }
+        android.os.Process.killProcess(android.os.Process.myPid());
+    }
+
     /** Closer together than this, a run is skipped before Python starts. */
     private static final long MIN_GAP_MS = 5 * 60 * 1000L;
 
@@ -62,6 +99,10 @@ public class AutoJob extends JobService {
             return false;
         }
         seen.edit().putLong("last_run", now).commit();
+        synchronized (AutoJob.class) {
+            running = this;
+            runningParams = params;
+        }
         new Thread(() -> {
             try {
                 File filesDir = getFilesDir();
@@ -83,16 +124,8 @@ public class AutoJob extends JobService {
             } catch (Throwable e) {
                 Log.w(TAG, "the rotation did not run", e);
             }
-            jobFinished(params, false);
-            // Python is done with this process; the next run gets a new one.
-            // A moment first: jobFinished() reaches the system asynchronously,
-            // and a process gone before it does reads as a job cut short —
-            // run again at once, and again.
-            try {
-                Thread.sleep(2000);
-            } catch (InterruptedException ignored) {
-            }
-            android.os.Process.killProcess(android.os.Process.myPid());
+            // Only reached when Python did not run auto.py to its end.
+            done();
         }).start();
         return true;
     }

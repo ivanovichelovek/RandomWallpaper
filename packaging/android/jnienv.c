@@ -303,3 +303,61 @@ int rw_auto_scheduled(char *error, size_t size)
     (*env)->PopLocalFrame(env, NULL);
     return yes ? 1 : 0;
 }
+
+/* AutoJob.done(): the rotation's run is over — jobFinished(), then the
+ * process ends. Does not return when it works; -1 on an error. */
+int rw_auto_done(char *error, size_t size)
+{
+    JNIEnv *env = WebView_AndroidGetJNIEnv();
+    error[0] = 0;
+    if (!env) {
+        say(error, size, "no Java VM");
+        return -1;
+    }
+    if ((*env)->PushLocalFrame(env, 16) != 0)
+        return -1;
+    jobject app = NULL;
+    jclass job = app_class(env, "dev.ivanc.randomwallpaper.AutoJob", &app, error, size);
+    CHECK(job);
+    jmethodID done = (*env)->GetStaticMethodID(env, job, "done", "()V");
+    CHECK(done);
+    (*env)->CallStaticVoidMethod(env, job, done);
+    CHECK(1);
+    (*env)->PopLocalFrame(env, NULL);
+    return 0;
+}
+
+/* Xiaomi's Autostart switch (Autostart.java). open == 0: its state — 1 on,
+ * 0 off, 2 when there is none or it cannot be read; open == 1: open the
+ * screen with it — 1 when something opened, 0 when nothing did. -1 on an
+ * error. */
+int rw_autostart(int open, char *error, size_t size)
+{
+    JNIEnv *env = WebView_AndroidGetJNIEnv();
+    error[0] = 0;
+    if (!env) {
+        say(error, size, "no Java VM");
+        return -1;
+    }
+    if ((*env)->PushLocalFrame(env, 16) != 0)
+        return -1;
+    jobject app = NULL;
+    jclass autostart = app_class(env, "dev.ivanc.randomwallpaper.Autostart", &app, error, size);
+    CHECK(autostart);
+    int result;
+    if (open) {
+        jmethodID go = (*env)->GetStaticMethodID(env, autostart, "open",
+                                                 "(Landroid/content/Context;)Z");
+        CHECK(go);
+        result = (*env)->CallStaticBooleanMethod(env, autostart, go, app) ? 1 : 0;
+    } else {
+        jmethodID state = (*env)->GetStaticMethodID(env, autostart, "state",
+                                                    "(Landroid/content/Context;)I");
+        CHECK(state);
+        jint now = (*env)->CallStaticIntMethod(env, autostart, state, app);
+        result = now < 0 ? 2 : now;
+    }
+    CHECK(1);
+    (*env)->PopLocalFrame(env, NULL);
+    return result;
+}

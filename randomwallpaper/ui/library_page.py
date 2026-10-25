@@ -7,7 +7,6 @@ one.
 """
 import hashlib
 import os
-import shutil
 from pathlib import Path
 
 from PySide6.QtCore import (
@@ -377,7 +376,7 @@ class LibraryPage(QWidget):
     def scan():
         """Saved wallpapers, and which categories each one is in.
 
-        Keyed by (device, inode), not by path: pinning hardlinks the file
+        Keyed by (device, inode), not by path: pinning links the file
         into the category's directory, so the same picture is reachable under
         two names — group them by inode and it appears once, not twice.
         """
@@ -412,6 +411,7 @@ class LibraryPage(QWidget):
         self.pool.clear()       # tiles queued for a listing about to go away
         self.list.clear()
         self.items = {}
+        core.dedupe_pools()
         self.entries = self.scan()
 
         self.empty.setVisible(not self.entries)
@@ -629,7 +629,7 @@ class LibraryPage(QWidget):
         if extra > 0:
             text += (f"  {extra} more copy goes too" if extra == 1 else
                      f"  {extra} more copies go too")
-            text += (" — the same picture is hardlinked into "
+            text += (" — the same picture is linked into "
                      "Pictures/Wallpapers and into every category it is "
                      "pinned to.")
         text += "  They go to the trash."
@@ -648,7 +648,16 @@ class LibraryPage(QWidget):
         for _, links in pending:
             wallpapers += 1
             for path in links:
-                if core.trash(path):
+                # A link in a category is a second name, not a second
+                # picture: there is nothing of it to keep in the trash, and
+                # moved there it would point at nothing.
+                if path.is_symlink():
+                    try:
+                        path.unlink()
+                        removed += 1
+                    except OSError:
+                        failed += 1
+                elif core.trash(path):
                     removed += 1
                 else:
                     failed += 1
@@ -714,13 +723,10 @@ class LibraryPage(QWidget):
                 continue
             dest = core.unique_path(directory, path.stem, path.suffix)
             try:
-                os.link(path, dest)
-            except OSError:
-                try:
-                    shutil.copy2(path, dest)
-                except OSError as exc:
-                    self.win.show_toast(f"Could not pin {path.name}: {exc}")
-                    continue
+                core.link_into(path, dest)
+            except OSError as exc:
+                self.win.show_toast(f"Could not pin {path.name}: {exc}")
+                continue
             added += 1
 
         label = core.theme_label(theme)
@@ -752,7 +758,7 @@ class LibraryPage(QWidget):
                 if not self._same(path, pinned):
                     continue
                 try:
-                    if pinned.stat().st_nlink > 1:
+                    if pinned.is_symlink() or pinned.stat().st_nlink > 1:
                         pinned.unlink()
                     elif not core.trash(pinned):
                         continue

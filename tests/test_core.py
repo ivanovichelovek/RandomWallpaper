@@ -696,6 +696,57 @@ check("a stray subdirectory is not scanned",
 check("non-images are not listed",
       not any(p.suffix == ".txt" for p in dict(scan())))
 
+# Android allows no hardlinks. A pin there used to be a copy, and the Saved
+# tab showed the picture twice: starred, and again without its star.
+probe = FAKE / "symlink-probe"
+try:
+    probe.symlink_to(FAKE)
+    can_symlink = True
+    probe.unlink()
+except OSError:
+    can_symlink = False     # Windows without the privilege: copies there
+if can_symlink:
+    starred = rw.SAVE_DIR / "starred-one.png"; starred.write_bytes(b"star")
+    spool = rw.theme_pool(rw.SHUFFLE); spool.mkdir(parents=True, exist_ok=True)
+    real_link = os.link
+
+    def no_hardlinks(*_args, **_kwargs):
+        raise PermissionError("no hardlinks here")
+
+    os.link = no_hardlinks
+    try:
+        rw.link_into(starred, spool / "starred-one.png")
+    finally:
+        os.link = real_link
+    listed = dict(scan())
+    check("without hardlinks a pin is still one tile",
+          [p for p in listed if p.name == "starred-one.png"] == [starred])
+    check("and that tile carries the star", listed[starred] == {rw.SHUFFLE})
+
+    # A copy an earlier version left behind is turned back into a link.
+    copied = rw.SAVE_DIR / "copied-one.png"; copied.write_bytes(b"copied")
+    shutil.copy2(copied, spool / "copied-one.png")
+    other = spool / "only-here.png"; other.write_bytes(b"only here")
+    check("an old copy shows as a second tile",
+          len([p for p in dict(scan()) if p.name == "copied-one.png"]) == 2)
+    os.link = no_hardlinks
+    try:
+        replaced = rw.dedupe_pools()
+    finally:
+        os.link = real_link
+    listed = dict(scan())
+    check("dedupe_pools replaces exactly the copy", replaced == 1)
+    check("the old copy is one starred tile now",
+          [p for p in listed if p.name == "copied-one.png"] == [copied]
+          and listed[copied] == {rw.SHUFFLE})
+    check("a file only in the category is left as it is",
+          other.is_file() and not other.is_symlink() and other in listed)
+    check("the picture is still in the category for the rotation",
+          spool / "copied-one.png" in rw.pool_images(rw.SHUFFLE))
+    # The shuffle tests further down start from an empty set.
+    shutil.rmtree(spool)
+    starred.unlink(); copied.unlink()
+
 
 # Old periods are pruned, recent ones kept so a revisit costs no download.
 # The applied one is spared whatever its age — and age alone would pick it,

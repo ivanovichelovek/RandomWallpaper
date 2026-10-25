@@ -38,6 +38,13 @@ def _shim():
     lib.rw_schedule_auto.restype = ctypes.c_int
     lib.rw_auto_scheduled.argtypes = (ctypes.c_char_p, ctypes.c_size_t)
     lib.rw_auto_scheduled.restype = ctypes.c_int
+    try:
+        lib.rw_auto_done.argtypes = (ctypes.c_char_p, ctypes.c_size_t)
+        lib.rw_auto_done.restype = ctypes.c_int
+        lib.rw_autostart.argtypes = (ctypes.c_int, ctypes.c_char_p, ctypes.c_size_t)
+        lib.rw_autostart.restype = ctypes.c_int
+    except AttributeError:
+        pass        # a libjnienv.so from before it had them
     return lib
 
 
@@ -62,6 +69,42 @@ def auto_scheduled():
         return False
     error = ctypes.create_string_buffer(512)
     return shim.rw_auto_scheduled(error, len(error)) == 1
+
+
+def auto_done():
+    """End the rotation's job: AutoJob.done() tells JobScheduler the run is
+    over and ends this process. Returns only if it could not be reached."""
+    import ctypes
+    shim = _shim()
+    if shim is None or not hasattr(shim, "rw_auto_done"):
+        raise OSError("this build cannot end the rotation's job")
+    error = ctypes.create_string_buffer(512)
+    shim.rw_auto_done(error, len(error))
+    raise OSError(error.value.decode(errors="replace") or "AutoJob.done() returned")
+
+
+def autostart():
+    """Xiaomi's Autostart switch for this app (Autostart.java): True or
+    False, or None where there is no such switch or it cannot be read.
+
+    Off, the system will not start the rotation's job with the app closed.
+    """
+    import ctypes
+    shim = _shim()
+    if shim is None or not hasattr(shim, "rw_autostart"):
+        return None
+    error = ctypes.create_string_buffer(512)
+    return {1: True, 0: False}.get(shim.rw_autostart(0, error, len(error)))
+
+
+def open_autostart():
+    """Open the screen with that switch. True if one opened."""
+    import ctypes
+    shim = _shim()
+    if shim is None or not hasattr(shim, "rw_autostart"):
+        return False
+    error = ctypes.create_string_buffer(512)
+    return shim.rw_autostart(1, error, len(error)) == 1
 
 
 def install_apk(path):

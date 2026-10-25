@@ -8,7 +8,7 @@ import os
 import threading
 from datetime import date, datetime
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QBoxLayout, QButtonGroup, QCheckBox, QDialog, QDialogButtonBox, QFrame,
     QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
@@ -17,11 +17,17 @@ from PySide6.QtWidgets import (
 )
 
 from .. import __version__, core, schedule, update
-from ..paths import IS_ANDROID
+from ..paths import IS_ANDROID, STATE_DIR
 from .style import Switch, theme as look, touch_scroll
 from .widgets import (
     Choice, NumberPicker, Picker, Segmented, Sheet, card, label, repolish, row, rule, titled,
 )
+
+# Set when the rotation is switched on with Xiaomi's Autostart off: the
+# Autostart screen is to be opened. A file, because the wallpaper the switch
+# puts up makes Android restart the app, and a screen opened before that
+# restart ends up behind the app as it comes back.
+ASK_AUTOSTART = STATE_DIR / "ask-autostart"
 
 
 def _notes_view(release):
@@ -296,6 +302,26 @@ class SettingsPage(QWidget):
         timer_row.addWidget(self.timer_button)
         self.timer_status.hide()
         self.timer_button.hide()
+        # On a Xiaomi phone the job alone is not enough: with the app's
+        # Autostart off, the system will not start it while the app is closed.
+        autostart_row = QVBoxLayout()
+        auto.addLayout(autostart_row)
+        self.autostart_status = label(
+            "Autostart is off for this app, and without it the phone will "
+            "not let the wallpaper change while the app is closed.",
+            "error", wrap=True)
+        self.autostart_button = QPushButton("Allow autostart")
+        self.autostart_button.clicked.connect(self.open_autostart)
+        autostart_row.addWidget(self.autostart_status)
+        autostart_row.addWidget(self.autostart_button)
+        self.autostart_status.hide()
+        self.autostart_button.hide()
+        if IS_ANDROID:
+            # Back from the Autostart screen: see what was chosen there.
+            from PySide6.QtGui import QGuiApplication
+            QGuiApplication.instance().applicationStateChanged.connect(
+                lambda state: self.check_timer()
+                if state == Qt.ApplicationActive else None)
 
         # ══ right: the reel ══════════════════════════════════════════════
         reel_card, reel = card()
@@ -458,7 +484,7 @@ class SettingsPage(QWidget):
             column.addStretch(1)
         root_layout.addStretch(1)
         self.refresh_hint()
-        self.check_timer()
+        self.check_timer(ask=True)
 
     @staticmethod
     def _times_ok(value):
@@ -794,6 +820,8 @@ class SettingsPage(QWidget):
         self._show_change_widgets()
         if self.prefs["change_mode"] != mode_before:
             self.check_timer()      # a foreign timer only matters off midnight
+        if not self.auto.isChecked():
+            self._show_autostart(None)      # nothing to run while closed
         self.refresh_hint()
         self.changed.emit()
 
@@ -825,6 +853,21 @@ class SettingsPage(QWidget):
                 schedule.ensure_installed()
             except Exception as exc:
                 problem = f"could not schedule the rotation: {exc}"
+            if IS_ANDROID:
+                # Asked for here, like a permission: the switch was just
+                # turned on, and on a Xiaomi phone it does nothing with the
+                # app closed until Autostart is allowed too. Asked a moment
+                # later, by whichever process is still here then: this one,
+                # or the one the restart starts (check_timer).
+                from ..desktop import android
+                if android.autostart() is False:
+                    try:
+                        ASK_AUTOSTART.parent.mkdir(parents=True, exist_ok=True)
+                        ASK_AUTOSTART.touch()
+                    except OSError:
+                        pass
+                    win.post_to_ui(lambda: QTimer.singleShot(
+                        4000, lambda: self.check_timer(ask=True)))
             said = lines[-1] if lines else ""
             if problem:
                 said = f"{problem} · {said}" if said else problem
@@ -846,15 +889,50 @@ class SettingsPage(QWidget):
 
         threading.Thread(target=work, daemon=True).start()
 
-    def check_timer(self):
+    def check_timer(self, ask=False):
+        """`ask`: open the Autostart screen if resume() left word to. The
+        page asks as it is built — after the restart — and resume() itself
+        a few seconds on, in case there was none."""
+        enabled = self.prefs.get("auto_enabled", False)
+
         def work():
             try:
                 state = schedule.status()
+                if IS_ANDROID and state == "missing" and enabled:
+                    # Android's job can go missing with nobody asking for
+                    # it — the phone's own cleaning, a force stop. The
+                    # rotation is on, so the job is put back rather than
+                    # asked about.
+                    schedule.install()
+                    state = schedule.status()
             except Exception:
                 state = "current"     # unknown: say nothing rather than nag
+            allowed = None
+            if IS_ANDROID:
+                from ..desktop import android
+                try:
+                    allowed = android.autostart()
+                except Exception:
+                    pass
+                if ask and ASK_AUTOSTART.exists():
+                    ASK_AUTOSTART.unlink(missing_ok=True)
+                    if allowed is False and enabled:
+                        self.win.post_to_ui(android.open_autostart)
             self.win.post_to_ui(lambda: self._show_timer(state))
+            self.win.post_to_ui(lambda: self._show_autostart(allowed))
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _show_autostart(self, allowed):
+        nag = allowed is False and self.auto.isChecked()
+        self.autostart_status.setVisible(nag)
+        self.autostart_button.setVisible(nag)
+
+    def open_autostart(self):
+        from ..desktop import android
+        if not android.open_autostart():
+            self.win.show_toast("Could not open the Autostart settings: find "
+                                "it under Settings → Apps → Random Wallpaper")
 
     def _show_timer(self, state):
         midnight = self.prefs["change_mode"] == "midnight"
