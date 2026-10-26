@@ -1119,6 +1119,62 @@ finally:
     del sys.frozen
     sys.executable = real_executable
 
+# ── opening at sign-in (Windows) ────────────────────────────────────────────
+# Task Manager's switch is a flag beside the Run value, not the value gone:
+# 2 is on, 3 is off, and no flag is on.
+from randomwallpaper import login  # noqa: E402
+
+check("no StartupApproved flag lets it run", login.approved(None))
+check("Task Manager's on lets it run", login.approved(bytes([2] + [0] * 11)))
+check("and its off does not", not login.approved(bytes([3] + [0] * 11)))
+# Started from the console twin or not, what opens at sign-in is the
+# windowed exe: a console must not flash up over the desktop.
+spaced = FAKE / "Random Wallpaper" / "random-wallpaper.exe"
+spaced.parent.mkdir()
+spaced.touch()
+spaced.with_name("random-wallpaper-cli.exe").touch()
+sys.frozen, sys.executable = True, str(spaced.with_name("random-wallpaper-cli.exe"))
+try:
+    check("the sign-in entry is the windowed exe, quoted",
+          login.command() == f'"{spaced}"')
+finally:
+    del sys.frozen
+    sys.executable = real_executable
+
+if sys.platform.startswith("win"):
+    # The real registry, under a key of the test's own: HOME and APPDATA
+    # are redirected for this run, HKCU is not.
+    import winreg  # noqa: E402
+    scratch = r"Software\random-wallpaper-test"
+    real_keys = login.RUN_KEY, login.APPROVED_KEY
+    login.RUN_KEY, login.APPROVED_KEY = scratch + r"\Run", scratch + r"\Approved"
+    try:
+        check("nothing at sign-in reads as off", login.status() == "off")
+        login.enable()
+        check("switched on reads as on", login.status() == "on")
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, login.APPROVED_KEY) as key:
+            winreg.SetValueEx(key, login.VALUE_NAME, 0, winreg.REG_BINARY,
+                              bytes([3] + [0] * 11))
+        check("switched off in Task Manager reads as off", login.status() == "off")
+        login.enable()
+        check("and switching it on here clears that", login.status() == "on")
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, login.RUN_KEY) as key:
+            winreg.SetValueEx(key, login.VALUE_NAME, 0, winreg.REG_SZ,
+                              r'"C:\elsewhere\random-wallpaper.exe"')
+        check("one starting another copy is outdated", login.status() == "outdated")
+        login.disable()
+        check("switched off reads as off", login.status() == "off")
+        login.disable()
+        check("and switching off twice is harmless", login.status() == "off")
+    finally:
+        login.RUN_KEY, login.APPROVED_KEY = real_keys
+        for sub in ("Run", "Approved", ""):
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER,
+                                 scratch + ("\\" + sub if sub else ""))
+            except OSError:
+                pass
+
 # ── how often inside a period ───────────────────────────────────────────────
 from datetime import datetime as dt  # noqa: E402
 

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import __version__, core, schedule, update
+from .. import __version__, core, login, schedule, update
 from ..paths import IS_ANDROID, STATE_DIR
 from .style import Switch, theme as look, touch_scroll
 from .widgets import (
@@ -93,6 +93,36 @@ class _UpdateDialog(QDialog):
             self.setWindowState(Qt.WindowMaximized)
         else:
             self.resize(520, 440)
+
+
+class _LoginDialog(QDialog):
+    """Asked once, the first time the Windows app opens: whether the window
+    should open at sign-in too."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("Open at sign-in")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 16)
+        layout.setSpacing(10)
+        layout.addWidget(label(
+            "Open Random Wallpaper when you sign in to Windows?", "title", wrap=True))
+        layout.addWidget(label(
+            "The rotation does not need it — it runs on its own schedule "
+            "with the window closed. This is the window, there to swipe "
+            "through after sign-in. It can be changed any time in Settings.",
+            "help", wrap=True))
+        buttons = QDialogButtonBox()
+        no = buttons.addButton("Not now", QDialogButtonBox.RejectRole)
+        yes = buttons.addButton("Open at sign-in", QDialogButtonBox.AcceptRole)
+        yes.setProperty("class", "accent")
+        yes.setDefault(True)
+        no.setAutoDefault(False)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+        yes.setFocus()
+        self.resize(460, 0)
 
 
 class _Columns(QWidget):
@@ -467,6 +497,11 @@ class SettingsPage(QWidget):
         self.check_updates.setChecked(prefs["check_updates"])
         self.check_updates.toggled.connect(self.apply)
         app.addWidget(row(label("Look for updates when the app opens"), self.check_updates))
+        if login.available():
+            self.login = Switch()
+            self.login.setChecked(login.status() != "off")
+            self.login.toggled.connect(self.set_login)
+            app.addWidget(row(label("Open when you sign in to Windows"), self.login))
         if not IS_ANDROID:
             keys = QPushButton("Show shortcuts")
             keys.clicked.connect(lambda: self.win.show_keys())
@@ -1005,7 +1040,11 @@ class SettingsPage(QWidget):
         Nothing is said when there is not, or when the feed cannot be
         reached — the window has only just opened. A run from source is not
         asked at all: there is nothing here that could update it.
+
+        The first time the Windows app opens, whether to open at sign-in is
+        asked before any of that, so the two never stand one on the other.
         """
+        self.ask_login()
         if not self.prefs["check_updates"] or update.install_kind() == "source":
             return
         win = self.win
@@ -1020,6 +1059,46 @@ class SettingsPage(QWidget):
                 win.post_to_ui(lambda: self._offer(release))
 
         threading.Thread(target=work, daemon=True).start()
+
+    # ── opening at sign-in ──────────────────────────────────────────────
+    def ask_login(self):
+        """Once, in the installed Windows app only. A run from source has no
+        program of its own to put at sign-in (and is what CI runs, where a
+        question nobody answers would hang the job). Closing the question is
+        an answer too: it is not asked again either way."""
+        if not login.available() or update.install_kind() != "windows":
+            return
+        try:
+            state = login.status()
+            if state == "outdated":
+                login.enable()      # the app moved: follow it
+        except OSError:
+            return
+        if self.prefs.get("login_asked") or state != "off":
+            self._login_asked()
+            return
+        wanted = _LoginDialog(self.win).exec() == QDialog.Accepted
+        self._login_asked()
+        if wanted:
+            self.login.setChecked(True)     # set_login does the rest
+
+    def _login_asked(self):
+        if not self.prefs.get("login_asked"):
+            self.prefs["login_asked"] = True
+            core.save_prefs(self.prefs)
+
+    def set_login(self, on):
+        self._login_asked()
+        try:
+            login.enable() if on else login.disable()
+        except OSError as exc:
+            self.win.show_toast(f"could not change the sign-in entry: {exc}")
+            self.login.blockSignals(True)
+            self.login.setChecked(login.status() != "off")
+            self.login.blockSignals(False)
+            return
+        self.win.show_toast("opens when you sign in to Windows" if on
+                            else "no longer opens at sign-in")
 
     def _offer(self, release):
         if self._release is not None:

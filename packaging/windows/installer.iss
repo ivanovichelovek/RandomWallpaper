@@ -101,6 +101,19 @@ begin
     SetTimerEnabled(True);
 end;
 
+// "Open when you sign in to Windows" (randomwallpaper/login.py) is a value
+// under the Run key, and Task Manager's on/off for it a flag beside it. Left
+// behind, every sign-in would try to start an exe that is gone, and the
+// Startup tab would list it forever.
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'RandomWallpaper');
+    RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run', 'RandomWallpaper');
+  end;
+end;
+
 [UninstallRun]
 ; The scheduled task would otherwise go on starting an exe that is gone.
 Filename: "{app}\random-wallpaper-cli.exe"; Parameters: "--uninstall-timer"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveTimer"

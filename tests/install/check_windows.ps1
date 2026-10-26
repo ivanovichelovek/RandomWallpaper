@@ -70,6 +70,16 @@ if ($LASTEXITCODE -eq 0) {
 Stop-Process -Name random-wallpaper -Force -ErrorAction SilentlyContinue
 Start-Sleep 2
 
+# What "Open when you sign in to Windows" writes, and what Task Manager adds
+# beside it when it is switched off there: the uninstaller removes both.
+$RunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$ApprovedKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+New-ItemProperty $RunKey -Name RandomWallpaper -Value "`"$Gui`"" -Force | Out-Null
+# Not New-Item -Force on a key that exists: that empties it of every value.
+if (-not (Test-Path $ApprovedKey)) { New-Item $ApprovedKey -Force | Out-Null }
+New-ItemProperty $ApprovedKey -Name RandomWallpaper -PropertyType Binary `
+    -Value ([byte[]](3,0,0,0,0,0,0,0,0,0,0,0)) -Force | Out-Null
+
 Write-Output "== uninstall"
 # The uninstaller copies itself to %TEMP% and returns at once, so its exit
 # proves nothing; wait for the files to go instead.
@@ -81,6 +91,10 @@ Check "and its Apps & features entry" { -not (Test-Path $Uninstall) }
 Check "and the Start menu entry" { -not (Test-Path $Shortcut) }
 schtasks /Query /TN RandomWallpaperAuto 2>$null | Out-Null
 Check "and the scheduled task" { $LASTEXITCODE -ne 0 }
+Check "and the sign-in entry" {
+    -not (Get-ItemProperty $RunKey -Name RandomWallpaper -ErrorAction SilentlyContinue) }
+Check "and Task Manager's flag for it" {
+    -not (Get-ItemProperty $ApprovedKey -Name RandomWallpaper -ErrorAction SilentlyContinue) }
 
 Write-Output "== $script:failures failed"
 exit [int]($script:failures -ne 0)

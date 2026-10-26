@@ -126,6 +126,9 @@ DEFAULTS = {
     # Ask GitHub for a newer release each time the window opens, and offer
     # to install it. Installed builds only; see ui.settings_page.
     "check_updates": True,
+    # Whether the Windows app has asked, once, to open at sign-in. Only that
+    # it asked: whether it opens is the registry's to say (see login.py).
+    "login_asked": False,
     # The window's colours: taken from the wallpaper on screen, or one fixed
     # hue; and dark, light, or whatever the system is set to. See ui.style.
     "colors": "wallpaper",
