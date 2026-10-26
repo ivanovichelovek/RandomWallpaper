@@ -3,6 +3,15 @@
 Each release's section is published as its GitHub release text, and is what
 the app shows when it offers that update.
 
+## 1.5.2
+
+- Windows: the app can open by itself when you sign in. It asks once, the
+  first time it opens, and Settings → Look & app → "Open when you sign in
+  to Windows" changes it later. Switching it off in Task Manager's Startup
+  tab shows as off here too. Changing the wallpaper on schedule does not
+  need it: that runs with the window closed either way.
+- Windows: uninstalling removes the sign-in entry too.
+
 ## 1.5.1
 
 - Android: each background change crashed on its way out, even after it
