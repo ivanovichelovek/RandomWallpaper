@@ -74,16 +74,23 @@ Start-Sleep 2
 # beside it when it is switched off there: the uninstaller removes both.
 $RunKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
 $ApprovedKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run"
+function Has-Value($key) {
+    [bool](Get-ItemProperty $key -Name RandomWallpaper -ErrorAction SilentlyContinue) }
+# A fresh runner has neither key. Not New-Item -Force on one that exists:
+# that empties it of every value.
+foreach ($key in $RunKey, $ApprovedKey) {
+    if (-not (Test-Path $key)) { New-Item $key -Force | Out-Null } }
 New-ItemProperty $RunKey -Name RandomWallpaper -Value "`"$Gui`"" -Force | Out-Null
-# Not New-Item -Force on a key that exists: that empties it of every value.
-if (-not (Test-Path $ApprovedKey)) { New-Item $ApprovedKey -Force | Out-Null }
 New-ItemProperty $ApprovedKey -Name RandomWallpaper -PropertyType Binary `
     -Value ([byte[]](3,0,0,0,0,0,0,0,0,0,0,0)) -Force | Out-Null
+Check "the sign-in entry is there to remove" { (Has-Value $RunKey) -and (Has-Value $ApprovedKey) }
 
 Write-Output "== uninstall"
 # The uninstaller copies itself to %TEMP% and returns at once, so its exit
-# proves nothing; wait for the files to go instead.
-Run-Setup "$App\unins000.exe" @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART") | Out-Null
+# proves nothing; wait for the files to go instead — and then for the
+# sign-in entry, which it removes last, once the files are gone.
+$UninstallLog = "$env:TEMP\rw-uninstall.log"
+Run-Setup "$App\unins000.exe" @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=`"$UninstallLog`"") | Out-Null
 $deadline = (Get-Date).AddSeconds(120)
 while ((Test-Path $Gui) -and (Get-Date) -lt $deadline) { Start-Sleep 2 }
 Check "the app is gone" { -not (Test-Path $Gui) }
@@ -91,10 +98,12 @@ Check "and its Apps & features entry" { -not (Test-Path $Uninstall) }
 Check "and the Start menu entry" { -not (Test-Path $Shortcut) }
 schtasks /Query /TN RandomWallpaperAuto 2>$null | Out-Null
 Check "and the scheduled task" { $LASTEXITCODE -ne 0 }
-Check "and the sign-in entry" {
-    -not (Get-ItemProperty $RunKey -Name RandomWallpaper -ErrorAction SilentlyContinue) }
-Check "and Task Manager's flag for it" {
-    -not (Get-ItemProperty $ApprovedKey -Name RandomWallpaper -ErrorAction SilentlyContinue) }
+$deadline = (Get-Date).AddSeconds(30)
+while (((Has-Value $RunKey) -or (Has-Value $ApprovedKey)) -and (Get-Date) -lt $deadline) { Start-Sleep 1 }
+Check "and the sign-in entry" { -not (Has-Value $RunKey) }
+Check "and Task Manager's flag for it" { -not (Has-Value $ApprovedKey) }
+if ($script:failures -and (Test-Path $UninstallLog)) {
+    Write-Output "== uninstall log"; Get-Content $UninstallLog -Tail 40 }
 
 Write-Output "== $script:failures failed"
 exit [int]($script:failures -ne 0)
