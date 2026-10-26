@@ -17,12 +17,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
         with: { enable-cache: true }
       - run: uv sync --locked --extra macos
       - run: uv run tests/screenshots.py screenshots
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: screenshots-${{ matrix.os }}

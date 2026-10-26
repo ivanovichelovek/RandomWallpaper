@@ -26,7 +26,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: v
         run: |
           version=$(python3 -c 'import randomwallpaper; print(randomwallpaper.__version__)')
@@ -45,8 +45,8 @@ jobs:
     # The oldest supported Ubuntu sets the glibc floor for everything bundled.
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
         with: { enable-cache: true }
       # Present at build time so PyInstaller bundles them: whatever the
       # build machine lacks, the package would have to find on the user's,
@@ -69,7 +69,7 @@ jobs:
           tar xzf nfpm.tgz nfpm && sudo mv nfpm /usr/local/bin/
       - run: packaging/linux/build-packages.sh
         env: { PYTHON: .venv/bin/python }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux
           path: dist/packages/*
@@ -100,9 +100,9 @@ jobs:
             install: dnf install -y /p/*.rpm
             remove: dnf remove -y random-wallpaper
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with: { sparse-checkout: tests/install }
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with: { name: linux, path: p }
       - name: Install, check, run, remove
         run: |
@@ -117,8 +117,8 @@ jobs:
     needs: version
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
         with: { enable-cache: true }
       - run: uv sync --locked --extra build
       - run: uv run packaging/make_icons.py
@@ -146,7 +146,7 @@ jobs:
         run: |
           $setup = (Get-ChildItem dist\installer\*.exe | Select-Object -First 1).FullName
           tests\install\check_windows.ps1 -Version "${{ needs.version.outputs.version }}" -Setup $setup
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows
           path: dist/installer/*.exe
@@ -159,8 +159,8 @@ jobs:
     # Intel build would need an Intel runner; see README.
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.2
         with: { enable-cache: true }
       # --extra macos: PyObjC in the bundle, so the wallpaper is set through
       # NSWorkspace. Without it every minute tick goes through System Events
@@ -174,7 +174,7 @@ jobs:
         env: { PYTHON: .venv/bin/python }
       - name: Install, check, run, remove
         run: tests/install/check_macos.sh "${{ needs.version.outputs.version }}" "$(ls dist/installer/*.dmg)"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos
           path: dist/installer/*.dmg
@@ -201,7 +201,7 @@ jobs:
     needs: [version, linux-install, windows, macos, android-x86_64, android-arm64]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # This version's section of CHANGELOG.md is the release's text, and
       # what the in-app update offer shows; a release without one is refused.
       - name: Release notes
@@ -217,7 +217,7 @@ jobs:
             || { echo "::error::CHANGELOG.md has no '## ${VERSION}' section"; exit 1; }
       # The installers only: the Android builds also leave a build log and
       # the emulator's screenshots behind.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: assets
           merge-multiple: true
